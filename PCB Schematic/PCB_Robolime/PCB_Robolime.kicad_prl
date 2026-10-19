@@ -58,8 +58,8 @@
   },
   "git": {
     "integration_disabled": false,
-    "repo_type": "",
-    "repo_username": "",
+    "repo_type": "https",
+    "repo_username": "ginoomapayapa",
     "ssh_key": ""
   },
   "meta": {
