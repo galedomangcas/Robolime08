@@ -1,0 +1,18 @@
+# KiCad backup and temporary files
+*.bak
+*.kicad_pcb-bak
+*.sch-bak
+*~
+_autosave-*
+*.tmp
+
+# KiCad lock files
+*.lck
+
+# Rescue libraries
+*-rescue.lib
+*-rescue.dcm
+
+# Output directories
+/plots/
+/gerbers/

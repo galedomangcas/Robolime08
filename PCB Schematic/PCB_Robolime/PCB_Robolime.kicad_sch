@@ -2624,7 +2624,7 @@
 		(uuid "54869af6-6414-4f86-8908-c83e4a20998e")
 	)
 	(junction
-		(at 213.36 158.75)
+		(at 212.09 158.75)
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "54e980e5-e2e7-4c21-8f18-40ffc2835b6e")
@@ -2845,7 +2845,7 @@
 	)
 	(wire
 		(pts
-			(xy 132.08 158.75) (xy 213.36 158.75)
+			(xy 132.08 158.75) (xy 214.63 158.75)
 		)
 		(stroke
 			(width 0)
@@ -2945,7 +2945,7 @@
 	)
 	(wire
 		(pts
-			(xy 210.82 33.02) (xy 210.82 36.83)
+			(xy 209.55 33.02) (xy 209.55 36.83)
 		)
 		(stroke
 			(width 0)
@@ -2985,7 +2985,7 @@
 	)
 	(wire
 		(pts
-			(xy 215.9 87.63) (xy 215.9 158.75)
+			(xy 214.63 87.63) (xy 214.63 158.75)
 		)
 		(stroke
 			(width 0)
@@ -2995,7 +2995,7 @@
 	)
 	(wire
 		(pts
-			(xy 41.91 33.02) (xy 210.82 33.02)
+			(xy 41.91 33.02) (xy 209.55 33.02)
 		)
 		(stroke
 			(width 0)
@@ -3135,17 +3135,7 @@
 	)
 	(wire
 		(pts
-			(xy 215.9 158.75) (xy 213.36 158.75)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "f6755605-16a6-45d1-90e5-96c16b5dea9c")
-	)
-	(wire
-		(pts
-			(xy 213.36 158.75) (xy 213.36 87.63)
+			(xy 212.09 158.75) (xy 212.09 87.63)
 		)
 		(stroke
 			(width 0)
@@ -3732,7 +3722,7 @@
 	)
 	(symbol
 		(lib_id "MCU_Module:Arduino_Nano_v3.x")
-		(at 213.36 62.23 0)
+		(at 212.09 62.23 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3743,7 +3733,7 @@
 		(fields_autoplaced yes)
 		(uuid "a11ba6e3-392e-449f-a53b-d839bc5d3e91")
 		(property "Reference" "A1"
-			(at 218.0433 87.63 0)
+			(at 216.7733 87.63 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3754,7 +3744,7 @@
 			)
 		)
 		(property "Value" "Arduino_Nano_v3.x"
-			(at 218.0433 90.17 0)
+			(at 216.7733 90.17 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3765,7 +3755,7 @@
 			)
 		)
 		(property "Footprint" "Module:Arduino_Nano"
-			(at 213.36 62.23 0)
+			(at 212.09 62.23 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3777,7 +3767,7 @@
 			)
 		)
 		(property "Datasheet" "http://www.mouser.com/pdfdocs/Gravitech_Arduino_Nano3_0.pdf"
-			(at 213.36 62.23 0)
+			(at 212.09 62.23 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3788,7 +3778,7 @@
 			)
 		)
 		(property "Description" "Arduino Nano v3.x"
-			(at 213.36 62.23 0)
+			(at 212.09 62.23 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
