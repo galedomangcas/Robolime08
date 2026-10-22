@@ -1,0 +1,29 @@
+{
+  "name": "@robolime/gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RoboLime offline-first field gateway: durable SQLite store, local pairing, read-only local API (Phase 2: storage and contracts only).",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:init": "tsx src/cli/db-init.ts",
+    "robot:provision": "tsx src/cli/robot-provision.ts",
+    "pairing:provision": "tsx src/cli/provision-pairing.ts",
+    "db:seed:demo": "tsx src/cli/seed-demo.ts",
+    "cloud-seed:generate": "tsx src/cli/generate-cloud-seed.ts",
+    "db:backup": "tsx src/cli/db-backup.ts"
+  },
+  "dependencies": {
+    "@robolime/shared": "0.1.0",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.5"
+  }
+}

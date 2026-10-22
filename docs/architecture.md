@@ -1,6 +1,6 @@
 # RoboLime software architecture
 
-Status: **Phase 1 (foundation)**. This document records the confirmed
+Status: **Phase 2 (local storage, pairing, API contract, cloud-mirror schema)**. This document records the confirmed
 architecture and what actually exists in the repository today. The full
 requirements live in [`CLAUDE.md`](../CLAUDE.md); open questions live in
 [`OPEN_ITEMS.md`](OPEN_ITEMS.md); decisions in [`decisions.md`](decisions.md).
@@ -69,39 +69,49 @@ navigation plans, or dosing instructions flow back to the robot. Dose
 calculation, expected post-correction pH, navigation, and field decisions stay
 on the robot.
 
-## Repository layout (Phase 1)
+## Repository layout (Phase 2)
 
 ```
 Robolime/
 ├── apps/
-│   └── mobile/            Expo + React Native + TypeScript app (Android + web)
+│   ├── mobile/            Expo + React Native + TypeScript app (Android + web)
+│   └── gateway/           Offline field gateway (Node, TypeScript, node:sqlite)
+│       ├── migrations/    Ordered SQLite migrations (0001_initial.sql)
+│       └── src/           db, store, pairing, api, sync mapping, seed, cli
 ├── packages/
-│   └── shared/            Domain contracts + pure utilities (app and future gateway)
-├── docs/                  Architecture, open items, decisions
+│   └── shared/            Domain contracts, local API v1 contract, pure
+│                          utilities, generated Supabase types (src/generated)
+├── supabase/              Cloud-mirror migrations, synthetic seed, RLS tests
+├── docs/                  Architecture, gateway, cloud mirror, open items, decisions
 ├── Website/               Pre-existing placeholder page (untouched)
 ├── PCB Schematic/         Pre-existing KiCad files (untouched)
 ├── eslint.config.js       One lint config for all workspaces
 └── package.json           npm workspaces root
 ```
 
-Planned for later phases (not created yet): `apps/gateway/` (TypeScript
-service + SQLite + LAN API), local SQLite migrations, `supabase/` migrations,
-packet simulator.
+Details: [`local-gateway.md`](local-gateway.md) (SQLite, pairing, API,
+outbox, backup) and [`cloud-mirror.md`](cloud-mirror.md) (Supabase schema,
+mapping, RLS, type generation).
 
 ## Components and their status
 
 | Component | Status |
 |---|---|
-| Shared domain types (readings, status, run type, timestamps, sync state, field selection, recommendation) | Phase 1 — implemented as contracts |
+| Shared domain types (readings, status, run type, timestamps, sync state, field selection, recommendation) | Phase 1–2 — implemented as contracts |
 | Formatting utilities (pH, metric units, state labels, cell progress, staleness) | Phase 1 — implemented and unit tested |
 | Expo app landing screen | Phase 1 — implemented; shows honest "no data" state only |
 | Web export (`expo export --platform web`) | Phase 1 — builds locally; all assets bundled, no CDN references |
-| Local/cloud data-source adapters | Not started |
-| Gateway, SQLite, LAN API, ACK ordering | Not started |
-| Binary packet decoder and simulator | Not started — blocked on signed-off packet spec |
-| Pairing (local and cloud) | Not started |
-| Supabase schema, RLS, sync | Not started; hosted project not touched |
-| Crop recommendation engine | Not started — needs sourced crop data |
+| Local SQLite schema, migrations, idempotent reading/status storage | Phase 2 — implemented and tested |
+| Durable sync outbox (state machine, restart recovery) | Phase 2 — contract implemented and tested; upload worker is Phase 4 |
+| Local pairing (scrypt verifier) and persisted sessions | Phase 2 — implemented and tested, offline |
+| Local API v1 contract + transport-independent handler with robot-scoped auth | Phase 2 — implemented and tested; **no HTTP server yet** (Phase 4) |
+| Cloud-mirror schema, RLS, generated types | Phase 2 — tested on a throwaway local PostgreSQL; **not applied to hosted Supabase** |
+| Synthetic demo seed (SQLite + generated cloud SQL with the same IDs) | Phase 2 — implemented and tested |
+| Local/cloud data-source adapters in the app | Not started (Phase 5) |
+| Binary packet decoder and simulator | Not started — blocked on signed-off packet spec (Phase 3) |
+| LoRa/USB receiver, ACK loop, LAN HTTP server, cloud sync worker | Not started (Phase 4) |
+| Online (cloud) pairing / robot-claim flow | Not started — trusted boundary defined (OPEN_ITEMS #14) |
+| Crop recommendation engine | Not started — rule tables exist; needs sourced crop data |
 | CSV exports | Not started |
 | Vercel deployment | Not changed — see "Vercel" below |
 
@@ -109,7 +119,17 @@ packet simulator.
 
 Every record carries up to three clocks (`RobotTimestamps` in
 `packages/shared`): robot-side time (the only user-facing measurement time),
-gateway receipt time, and cloud sync time. They are never conflated.
+gateway receipt time, and cloud sync time. They are never conflated. In
+SQLite they are separate columns (`robot_*_at`, `gateway_*_at`) plus
+`sync_outbox.cloud_confirmed_at`; in the cloud, `cloud_received_at` is set by
+the database itself.
+
+## Identity
+
+Every mirrored row uses a deterministic UUIDv5 derived from its natural key,
+identical in SQLite and PostgreSQL. Readings are keyed by
+`(run_id, cell_index, seq)`; firmware run/robot identifiers are stored as
+opaque text and never assumed to be UUIDs. See `local-gateway.md`.
 
 ## Staleness
 

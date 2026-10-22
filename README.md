@@ -5,12 +5,15 @@ System — BS Computer Engineering thesis, Polytechnic University of the
 Philippines.
 
 This repository holds the software (mobile app, web app, shared domain code,
-and — in later phases — the offline-first laptop gateway) alongside the
-team's hardware files.
+the offline-first laptop gateway, and the Supabase cloud-mirror schema)
+alongside the team's hardware files.
 
-> **Status: Phase 1 foundation.** The app currently shows a landing screen
-> with honest "no data" states. Robot hardware, the gateway, pairing, cloud
-> sync, crop recommendations, and CSV exports are **not implemented yet**.
+> **Status: Phase 2.** The app shows a landing screen with honest "no data"
+> states. The offline gateway's SQLite store, local pairing, API contract and
+> sync-state model are implemented and tested, and the Supabase cloud-mirror
+> schema is tested locally. The radio receiver, HTTP server, cloud upload,
+> app screens, crop scoring and CSV exports are **not implemented yet**, and
+> nothing has been applied to hosted Supabase.
 > See [`docs/architecture.md`](docs/architecture.md).
 
 ## Team setup note
@@ -24,15 +27,17 @@ Eto yung tutorial vid >>  https://www.youtube.com/watch?v=V7WpadAi3RI
 | Path | What it is |
 |---|---|
 | `apps/mobile/` | Expo + React Native + TypeScript app (Android and web from one codebase) |
-| `packages/shared/` | Shared domain types and pure, tested utilities (pH/unit formatting, robot-state labels, cell progress, staleness) |
-| `docs/` | [Architecture](docs/architecture.md), [open items](docs/OPEN_ITEMS.md), [decisions](docs/decisions.md) |
+| `apps/gateway/` | Offline field gateway: SQLite store, migrations, local pairing, read-only API handler, sync outbox ([guide](docs/local-gateway.md)) |
+| `packages/shared/` | Shared domain types, local API v1 contract, pure tested utilities, generated Supabase types |
+| `supabase/` | Cloud-mirror migrations, RLS, synthetic seed and local tests ([guide](docs/cloud-mirror.md)) |
+| `docs/` | [Architecture](docs/architecture.md), [local gateway](docs/local-gateway.md), [cloud mirror](docs/cloud-mirror.md), [open items](docs/OPEN_ITEMS.md), [decisions](docs/decisions.md) |
 | `CLAUDE.md` | Software master prompt / requirements |
 | `Website/` | Earlier placeholder web page (kept as-is; superseded by the Expo web build) |
 | `PCB Schematic/` | KiCad PCB project |
 
 ## Requirements
 
-- Node.js 20 or newer (an LTS release is recommended; developed on Node 26.11.1)
+- Node.js 22.13 or newer (the gateway uses the built-in `node:sqlite`; an LTS release is recommended; developed on Node 26.11.1)
 - npm (comes with Node; developed on npm 11.20.0)
 - Git
 - For Android: the **Expo Go** app on the phone, or Android Studio for an emulator
@@ -68,7 +73,7 @@ npm run android   # open on a connected Android device/emulator
 ```bash
 npm run typecheck # strict TypeScript, all workspaces
 npm run lint      # ESLint (expo config + no-explicit-any)
-npm test          # Vitest (packages/shared) + Jest (apps/mobile)
+npm test          # Vitest (packages/shared, apps/gateway) + Jest (apps/mobile)
 npm run check     # all three
 ```
 
@@ -88,3 +93,27 @@ cd apps/mobile && npx expo serve
 
 Vercel deployment is **not configured yet**; the required settings are in
 [`docs/architecture.md`](docs/architecture.md#vercel-future-settings--not-applied).
+
+## Field gateway (offline)
+
+```bash
+npm run db:init -w @robolime/gateway -- --db <field.sqlite>          # create/migrate (never seeds)
+npm run robot:provision -w @robolime/gateway -- --db <field.sqlite> --source-id <id> --name "<name>"
+npm run pairing:provision -w @robolime/gateway -- --db <field.sqlite> --robot <id>   # shows a code once
+npm run db:backup -w @robolime/gateway -- --db <field.sqlite> --out <backup.sqlite>
+npm run db:seed:demo -w @robolime/gateway -- --db <demo.sqlite>       # SYNTHETIC data, separate file
+```
+
+Never commit database files, pairing codes or session tokens. Details:
+[`docs/local-gateway.md`](docs/local-gateway.md).
+
+## Cloud mirror (local tests only)
+
+```bash
+npm run db:cloud:test     # throwaway local PostgreSQL: migrations + synthetic seed + RLS tests
+npm run db:cloud:types    # same, then regenerate packages/shared/src/generated/database.types.ts
+```
+
+Requires PostgreSQL server binaries (`PG_BIN`). These commands never connect
+to the hosted Supabase project; do not link or push to it without team
+approval. Details: [`docs/cloud-mirror.md`](docs/cloud-mirror.md).

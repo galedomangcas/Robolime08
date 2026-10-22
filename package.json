@@ -15,7 +15,9 @@
     "lint": "eslint .",
     "test": "npm run test --workspaces --if-present",
     "build:web": "npm run build:web --workspace @robolime/mobile",
-    "check": "npm run typecheck && npm run lint && npm run test"
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "db:cloud:test": "node supabase/tests/run-local-postgres.mjs",
+    "db:cloud:types": "node supabase/tests/run-local-postgres.mjs --gen-types packages/shared/src/generated/database.types.ts"
   },
   "engines": {
     "node": ">=20"

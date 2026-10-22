@@ -34,6 +34,7 @@ export interface CropScore {
 }
 
 export interface CropRecommendation {
+  id: string;
   /** Always a dosing run: verification runs never produce recommendations. */
   runId: string;
   ruleSetVersion: string;
