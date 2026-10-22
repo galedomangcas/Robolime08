@@ -1,0 +1,62 @@
+# Open items
+
+Items that must be confirmed by the hardware, firmware, or research team
+before the related code is treated as final. **Do not resolve these by
+guessing.** Update the status column with who confirmed what and when.
+
+| # | Item | Owner | Blocks | How the code handles it now | Status |
+|---|---|---|---|---|---|
+| 1 | **Signed-off byte-level LoRa packet specification** (reading record and status packet: field order, offsets, widths, endianness, scaling, timestamp encoding, flag bits, ACK format) | Firmware | Packet decoder, simulator, gateway ingest | Domain types describe decoded values only; no byte offsets exist in the code | Open |
+| 2 | **Lime tank capacity** (≤ 5,000 mL; exact value undecided) | Hardware | Any display relating dispensed volume to capacity; `LIME_EMPTY` interpretation | Not hardcoded anywhere. `LIME_EMPTY` is taken from the robot's error flag, not computed by the app. No remaining-lime gauge is shown (by requirement) | Open |
+| 3 | **Stale-data threshold** (currently 240 s) must be re-checked against the measured time per cell | Research + hardware | Stale labels | `STALE_THRESHOLD_SECONDS = 240` in `packages/shared/src/config.ts`, marked provisional | Open |
+| 4 | **"Near target" pH band boundary** for the dashboard map (target pH 6.0 is confirmed) | Research | Map colouring | Not implemented yet; will be a central configuration value | Open |
+| 5 | **Crop candidates and sourced suitability ranges** (Batangas-cultivated, non-perennial, Philippine institutional sources), score rules, season boundaries, seasonal weather defaults | Research | Recommendation engine | Only the `CropRecommendation` contract exists; no crop data or ranges in code | Open |
+| 6 | **Field network setup**: Wi-Fi AP/hotspot choice, laptop placement, firewall/client-isolation behaviour, Android cleartext-HTTP config if plain HTTP is used on the isolated LAN | Team (physical test) | Gateway LAN API, Android app reaching laptop | `EXPO_PUBLIC_GATEWAY_URL` placeholder only; no network calls yet | Open |
+| 7 | **EC unit reported by the probe** (µS/cm, mS/cm, or dS/m) | Hardware | EC display and CSV headers | `formatEc` requires the unit to be passed explicitly; no default unit assumed | Open |
+| 8 | **Robot clock source and accuracy** (GPS time? RTC?) — staleness compares robot time with the viewer's clock | Firmware | Accurate "age" display | `describeFreshness` reports a distinct `future` state when the robot clock is ahead instead of hiding it | Open |
+| 9 | **Component self-check flag bit positions** (probe, GPS, pump, drive motors, Nano link, LoRa radio, flash, battery sensor) | Firmware | Monitoring-strip dot checker | Component names defined; no bit mapping | Open (part of #1) |
+| 10 | **Battery health definition** (how "health" is derived from voltage or reported by the robot) | Hardware | Monitoring strip | Not implemented; only voltage is in the status contract | Open |
+| 11 | **Reading-record flag bits** (only "verification run" is known to exist) | Firmware | Decoder, exports | `rawFlags` is preserved; `runType` is a decoded field | Open (part of #1) |
+| 12 | **Reference documents** `4108_DP1 Manuscript.md` and `Pasted text(2).txt` are not in the repository | Team | Cross-checking terminology against the manuscript | Work proceeds from `CLAUDE.md` | Open |
+
+## Housekeeping (not blocking, deliberately untouched in Phase 1)
+
+- `PCB Schematic/PCB_Robolime/.history` is tracked as an orphan submodule
+  pointer (no `.gitmodules`). Probably a KiCad local-history folder committed
+  by accident.
+- `Website/` placeholder page will be superseded by the Expo web build; the
+  team decides when to archive it.
+- `npm audit` — see "Dependency audit" below.
+
+## Dependency audit (checked 2026-10-23, Expo SDK 58.0.17)
+
+`npm audit --omit=dev` reports 15 high-severity entries (43 total including
+dev tooling: 25 high, 18 moderate). The 15 production entries come from
+**two root advisories**; the other 13 (`expo`, `@expo/cli`, `@expo/metro`,
+`@expo/metro-config`, `@expo/code-signing-certificates`, `metro`,
+`metro-config`, `metro-file-map`, `metro-transform-worker`, `micromatch`,
+`react-native`, `@react-native/community-cli-plugin`,
+`@react-native/virtualized-lists`) are flagged only because they depend on
+them. They count as "production" because `expo` and `react-native` list
+their CLI/bundler packages as regular dependencies.
+
+| Root advisory | Severity | Installed | Used by | In app bundle? | Non-breaking fix? | Decision |
+|---|---|---|---|---|---|---|
+| `braces` — [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm), stack-exhaustion DoS from deeply nested glob patterns | High | 3.0.3 (latest published) | `micromatch` → Metro file watcher, at dev/build time | **No** in the verified web bundle. App code never imports it, so it is not expected in the Android bundle either (Android release bundle not built yet) | **None** — no patched version exists | Defer. Patterns come from our own build config, not from untrusted input |
+| `node-forge` — [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv), RSA PKCS#1 v1.5 signature check accepts extra nested DigestAlgorithm elements | High | 1.4.0 (latest published) | `@expo/cli` → `@expo/code-signing-certificates` (signing of `expo-updates` manifests in the dev/CLI tooling) | **No** | **None** — no patched version exists | Defer. RoboLime does not use `expo-updates` code signing |
+
+npm's suggested "fix" is downgrading to `expo@44` / `react-native@0.72`,
+which is not a real option, and `npm audit fix --force` was not run.
+
+**Remaining risk:** limited to developer/build machines running Expo CLI and
+Metro, with input controlled by the team. No vulnerable package ships to
+phones or browsers. **Action:** re-run `npm audit --omit=dev` after each Expo
+SDK 58 patch update (`npx expo install --fix`) and before any Vercel
+deployment or Android release build; adopt the fix as soon as patched
+`braces`/`node-forge` releases are pulled in by Expo.
+
+## Manuscript reconciliation
+
+None identified yet in Phase 1. Record here any place where the software
+departs from the manuscript (e.g. the offline-first gateway replacing direct
+Supabase reads in the field).

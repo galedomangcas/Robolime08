@@ -1,0 +1,27 @@
+{
+  "name": "robolime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RoboLime software: Expo mobile/web app, shared domain contracts, and (later) the offline-first field gateway.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "start": "npm run start --workspace @robolime/mobile",
+    "web": "npm run web --workspace @robolime/mobile",
+    "android": "npm run android --workspace @robolime/mobile",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "test": "npm run test --workspaces --if-present",
+    "build:web": "npm run build:web --workspace @robolime/mobile",
+    "check": "npm run typecheck && npm run lint && npm run test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "~58.0.4"
+  }
+}

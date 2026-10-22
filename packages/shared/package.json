@@ -1,0 +1,16 @@
+{
+  "name": "@robolime/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared RoboLime domain contracts and pure formatting utilities (used by the app and, later, the gateway).",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.5"
+  }
+}
