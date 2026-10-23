@@ -8,17 +8,26 @@ This repository holds the software (mobile app, web app, shared domain code,
 the offline-first laptop gateway, and the Supabase cloud-mirror schema)
 alongside the team's hardware files.
 
-> **Status: Phase 3.** The app shows a landing screen with honest "no data"
-> states. The offline gateway's SQLite store, local pairing, API contract and
-> sync-state model are implemented and tested, and the Supabase cloud-mirror
-> schema is tested locally. Phase 3 added the USB serial and LoRa protocol
-> contracts, write-before-ACK ingest and a packet simulator — tested in
-> software only; the LoRa byte layout is not signed off, no firmware is in
-> this repository, and **manual commands are specified but disabled**. The
-> serial-port connection, HTTP server, cloud upload, app screens, crop scoring
-> and CSV exports are **not implemented yet**, and nothing has been applied to
-> hosted Supabase.
-> See [`docs/architecture.md`](docs/architecture.md).
+> **Status: Phase 3.** See [`docs/architecture.md`](docs/architecture.md).
+>
+> **Software that exists (verified only by automated tests on a development
+> computer):**
+> - Expo app: a landing screen with honest "no data" states.
+> - Offline field gateway (`apps/gateway`): durable SQLite store and
+>   migrations, local pairing and sessions, read-only local API handler (no
+>   HTTP server yet), cloud-sync outbox, write-before-ACK ingest of simulated
+>   radio messages (no real LoRa decoder yet), and a USB-serial protocol
+>   session that works on byte arrays (no serial port attached yet).
+> - USB serial and LoRa protocol contracts, a packet simulator, and the
+>   Supabase cloud-mirror schema (tested on a throwaway local PostgreSQL only).
+>
+> **Not implemented:** the serial-port connection, LAN HTTP server, cloud
+> upload, app screens, crop scoring and CSV exports. Nothing has been applied
+> to hosted Supabase. **Manual commands are specified but disabled.**
+>
+> **Not verified on hardware:** no physical robot, ESP32, Ra-02 radio, USB
+> serial link, Android device or field network has been tested. The LoRa byte
+> layout is not signed off and no firmware is in this repository.
 
 ## Team setup note
 
@@ -41,7 +50,16 @@ Eto yung tutorial vid >>  https://www.youtube.com/watch?v=V7WpadAi3RI
 
 ## Requirements
 
-- Node.js 22.13 or newer (the gateway uses the built-in `node:sqlite`; an LTS release is recommended; developed on Node 26.11.1)
+- **Node.js 24 LTS is recommended** for setup. The reviewed release is
+  Node.js 24.22.1, listed as LTS ("Krypton") in the official Node.js release
+  index; it satisfies the project's engine requirements.
+  - Accepted range (`engines`): `^22.16.0 || ^24.3.0 || >=26.0.0`. The
+    gateway's built-in `node:sqlite` code needs 22.16+ / 24+, and Expo SDK 58
+    needs 24.3+ on the 24 line (see [decision D27](docs/decisions.md)).
+  - Local validation ran on Node.js 26.11.1, which is not an LTS release.
+    No other Node.js version has been run.
+  - A version being accepted by `engines` does not mean it has been tested;
+    in particular, future Node.js major releases are untested.
 - npm (comes with Node; developed on npm 11.20.0)
 - Git
 - For Android: the **Expo Go** app on the phone, or Android Studio for an emulator

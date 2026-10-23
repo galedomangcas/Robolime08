@@ -247,3 +247,32 @@ Because the robot clock source is unconfirmed (OPEN_ITEMS #8), commands carry
 answers equal sequences as duplicates. Gateway outcomes distinguish
 "never sent" (`EXPIRED_UNSENT`) from "sent but unconfirmed" (`UNCONFIRMED`):
 the latter never claims the robot did or did not act.
+
+## D27 — Node.js engine range corrected (pre-publication review)
+
+**Evidence.** The gateway uses `node:sqlite` (`DatabaseSync`, its
+`readOnly` option, `prepare`/`exec`/`close`) and the
+`DatabaseSync.isTransaction` property (`withTransaction` and the
+`handleUplink` nested-transaction guard). Node.js v22 `node:sqlite`
+documentation (https://nodejs.org/docs/latest-v22.x/api/sqlite.html, which
+documented v22.23.4 when accessed on 2026-10-23): `node:sqlite` is unflagged
+from v22.13.0; `database.isTransaction` was added in v22.16.0.
+`@types/node` 26.6.5 marks `isTransaction` `@since v24.0.0` and `readOnly`
+`@since v22.12.0`. Neither source shows
+`isTransaction` on Node 23. On 22.13–22.15 the property would be
+`undefined`, so the nested-transaction guard would silently never fire.
+Tooling `engines.node`, as declared in each package's own `package.json`
+and recorded identically in `package-lock.json`: vitest 5.0.5
+`^22.12.0 || ^24.0.0 || >=26.0.0`; expo 58.0.17 `^22.13.0 || ^24.3.0 ||
+^26.0.0 || >=27.0.0`; react-native 0.88.0 and metro 0.87.1 `^22.13.0 ||
+^24.3.0 || >= 26.0.0` (equivalent ranges).
+
+**Chosen.** Gateway `engines.node`: `^22.16.0 || ^24.0.0 || >=26.0.0`
+(code ∩ vitest). Root `engines.node`: `^22.16.0 || ^24.3.0 || >=26.0.0`
+(adds Expo/React Native). Previously `>=22.13` and `>=20`. No dependency
+or SQLite code was changed. Only Node 26.11.1 has actually been run.
+
+Node.js 25 is excluded because the locked toolchain does not declare support
+for it. The open-ended `>=26.0.0` range follows upstream package engine
+declarations; compatibility with future Node.js major releases remains
+unverified until tested.

@@ -2,7 +2,7 @@
   "name": "robolime",
   "version": "0.1.0",
   "private": true,
-  "description": "RoboLime software: Expo mobile/web app, shared domain contracts, and (later) the offline-first field gateway.",
+  "description": "RoboLime software: Expo mobile/web app, shared domain and protocol contracts, and the offline-first field gateway (no hardware integration yet).",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -20,7 +20,7 @@
     "db:cloud:types": "node supabase/tests/run-local-postgres.mjs --gen-types packages/shared/src/generated/database.types.ts"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^22.16.0 || ^24.3.0 || >=26.0.0"
   },
   "devDependencies": {
     "eslint": "^9.39.5",

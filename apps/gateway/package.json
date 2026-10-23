@@ -5,7 +5,7 @@
   "description": "RoboLime offline-first field gateway: durable SQLite store, local pairing, read-only local API, protocol session and simulator (no serial port or HTTP server yet).",
   "type": "module",
   "engines": {
-    "node": ">=22.13"
+    "node": "^22.16.0 || ^24.0.0 || >=26.0.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

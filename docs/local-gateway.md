@@ -14,8 +14,12 @@ Everything in this document works with **no internet** and no Supabase.
 
 ## Requirements
 
-- Node.js **22.13 or newer** (uses the built-in `node:sqlite`; no native
-  build step, so the same code runs on a laptop or Raspberry Pi).
+- Node.js **22.16+ on the 22.x line, 24.0+, or 26+** (`^22.16.0 || ^24.0.0 ||
+  >=26.0.0`). It uses the built-in `node:sqlite` — no native build step, so
+  the same code runs on a laptop or Raspberry Pi — including
+  `DatabaseSync.isTransaction`, which exists only from v22.16.0 / v24.0.0
+  (decision D27). The whole repository (with Expo) needs `^22.16.0 ||
+  ^24.3.0 || >=26.0.0`.
 - Install from the repository root: `npm install`.
 
 ## Commands
