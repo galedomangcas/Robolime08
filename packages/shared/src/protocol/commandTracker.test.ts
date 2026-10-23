@@ -1,55 +1,43 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   CommandBusyError,
   CommandRejectedLocallyError,
   CommandTimingUnconfirmedError,
   CommandTracker,
-  COMMAND_TIMING,
   isTerminalCommandState,
   type CommandTimingConfig,
 } from './commandTracker';
-import {
-  MANUAL_COMMAND_APPROVAL,
-  MANUAL_COMMAND_LIMITS,
-  ManualCommandsNotApprovedError,
-  checkManualCommand,
-  isManualCommandingEnabled,
-  type ManualCommandApproval,
-  type ManualCommandLimits,
-} from './manualCommands';
+import { MANUAL_COMMAND_LIMITS, checkManualCommand, type ManualCommandLimits } from './manualCommands';
+
+/**
+ * TEST-ONLY: opens the manual-command gate for THIS FILE by replacing the gate
+ * function through the test runner's module mock. Production code has no
+ * equivalent: the gate reads only the committed constant and takes no
+ * arguments. manualCommandGate.test.ts proves the real gate is closed.
+ */
+vi.mock('./manualCommands', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./manualCommands')>()),
+  assertManualCommandingEnabled: () => undefined,
+}));
 
 /** TEST-ONLY values: they exercise the state machine and are NOT proposed real settings. */
-const TEST_ONLY_APPROVAL: ManualCommandApproval = { approved: true, architectureDecision: 'TEST-ONLY', hardwareSafetySignOff: 'TEST-ONLY' };
 const TEST_ONLY_LIMITS: ManualCommandLimits = { maxDriveDurationMs: 2_000, maxCommandTtlMs: 5_000 };
 const TEST_ONLY_TIMING: CommandTimingConfig = { ackTimeoutMs: 1_000, maxTransmissions: 3, executionReportTimeoutMs: 4_000 };
 
-const tracker = (firstSeq = 1) =>
-  new CommandTracker({ approval: TEST_ONLY_APPROVAL, limits: TEST_ONLY_LIMITS, timing: TEST_ONLY_TIMING, firstSeq });
+const tracker = (firstSeq = 1) => new CommandTracker({ limits: TEST_ONLY_LIMITS, timing: TEST_ONLY_TIMING, firstSeq });
 
 const drive = { type: 'DRIVE', direction: 'FORWARD', durationMs: 1_000 } as const;
 
-describe('manual-command gate (production state)', () => {
-  it('is disabled, with no limits or timing confirmed', () => {
-    expect(isManualCommandingEnabled(MANUAL_COMMAND_APPROVAL)).toBe(false);
-    expect(Object.isFrozen(MANUAL_COMMAND_APPROVAL)).toBe(true);
-    expect(MANUAL_COMMAND_LIMITS).toEqual({ maxDriveDurationMs: null, maxCommandTtlMs: null });
-    expect(COMMAND_TIMING).toBeNull();
-  });
-
-  it('requires both an architecture decision and a hardware sign-off, not just a flag', () => {
-    expect(isManualCommandingEnabled({ approved: true, architectureDecision: 'D21', hardwareSafetySignOff: null })).toBe(false);
-    expect(isManualCommandingEnabled({ approved: true, architectureDecision: null, hardwareSafetySignOff: 'HW-1' })).toBe(false);
-  });
-
-  it('a tracker built with the production settings refuses every command, including STOP', () => {
-    const t = new CommandTracker({ approval: MANUAL_COMMAND_APPROVAL, limits: MANUAL_COMMAND_LIMITS, timing: COMMAND_TIMING, firstSeq: 1 });
-    expect(() => t.submit({ type: 'STOP' }, 1_000, 0)).toThrow(ManualCommandsNotApprovedError);
-  });
-
-  it('refuses to run without confirmed timing even if approved', () => {
-    const t = new CommandTracker({ approval: TEST_ONLY_APPROVAL, limits: TEST_ONLY_LIMITS, timing: null, firstSeq: 1 });
+describe('CommandTracker preconditions (gate mocked open)', () => {
+  it('refuses to run without confirmed timing', () => {
+    const t = new CommandTracker({ limits: TEST_ONLY_LIMITS, timing: null, firstSeq: 1 });
     expect(() => t.submit({ type: 'STOP' }, 1_000, 0)).toThrow(CommandTimingUnconfirmedError);
+  });
+
+  it('refuses every command with the production (unconfirmed) limits', () => {
+    const t = new CommandTracker({ limits: MANUAL_COMMAND_LIMITS, timing: TEST_ONLY_TIMING, firstSeq: 1 });
+    expect(() => t.submit({ type: 'STOP' }, 1_000, 0)).toThrow(CommandRejectedLocallyError);
   });
 });
 

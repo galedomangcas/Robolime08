@@ -4,8 +4,10 @@ import {
   LORA_CONTRACT_VERSION,
   LORA_MAX_PAYLOAD_BYTES,
   LoRaEncodeError,
+  NonWireCodecError,
   UNSIGNED_LORA_CODEC,
   PacketSpecNotSignedOffError,
+  assertHardwareCodec,
   decodeLoRaPayload,
   encodeLoRaMessage,
   validateLoRaMessage,
@@ -13,14 +15,7 @@ import {
   type LoRaPayloadCodec,
   type LoRaReadingMessage,
 } from './lora';
-import { MANUAL_COMMAND_APPROVAL, ManualCommandsNotApprovedError, type ManualCommandApproval } from './manualCommands';
-
-/** TEST-ONLY approval used to exercise code paths behind the gate. Never used outside tests. */
-const TEST_ONLY_APPROVAL: ManualCommandApproval = {
-  approved: true,
-  architectureDecision: 'TEST-ONLY',
-  hardwareSafetySignOff: 'TEST-ONLY',
-};
+import { ManualCommandsNotApprovedError } from './manualCommands';
 
 const reading: LoRaReadingMessage = {
   contractVersion: LORA_CONTRACT_VERSION,
@@ -175,21 +170,30 @@ describe('encodeLoRaMessage', () => {
     command: { type: 'STOP' },
   };
 
-  it('blocks manual commands with the production approval, before touching the codec', () => {
+  it('blocks manual commands before touching the codec', () => {
     let codecCalled = false;
     const codec: LoRaPayloadCodec = { ...passThroughCodec(null), encode: () => { codecCalled = true; return Uint8Array.of(1); } };
-    expect(() => encodeLoRaMessage(codec, command, MANUAL_COMMAND_APPROVAL)).toThrow(ManualCommandsNotApprovedError);
+    expect(() => encodeLoRaMessage(codec, command)).toThrow(ManualCommandsNotApprovedError);
     expect(codecCalled).toBe(false);
   });
 
   it('cannot encode anything with the unsigned placeholder codec', () => {
     const ack: LoRaMessage = { contractVersion: 1, kind: 'STORAGE_ACK', robotId: 'R', messageId: 1, runId: 'RUN-1', cellIndex: 0, seq: 0, result: 'STORED' };
-    expect(() => encodeLoRaMessage(UNSIGNED_LORA_CODEC, ack, MANUAL_COMMAND_APPROVAL)).toThrow(PacketSpecNotSignedOffError);
+    expect(() => encodeLoRaMessage(UNSIGNED_LORA_CODEC, ack)).toThrow(PacketSpecNotSignedOffError);
   });
 
   it('validates messages and enforces the radio payload size limit', () => {
-    expect(() => encodeLoRaMessage(passThroughCodec(null), { ...reading, ph: 15 }, MANUAL_COMMAND_APPROVAL)).toThrow(LoRaEncodeError);
-    expect(() => encodeLoRaMessage(passThroughCodec(null, 256), reading, MANUAL_COMMAND_APPROVAL)).toThrow(/exceeds 255/);
-    expect(encodeLoRaMessage(passThroughCodec(null, 255), command, TEST_ONLY_APPROVAL)).toHaveLength(255);
+    const ack: LoRaMessage = { contractVersion: 1, kind: 'STORAGE_ACK', robotId: 'R', messageId: 1, runId: 'RUN-1', cellIndex: 0, seq: 0, result: 'STORED' };
+    expect(() => encodeLoRaMessage(passThroughCodec(null), { ...reading, ph: 15 })).toThrow(LoRaEncodeError);
+    expect(() => encodeLoRaMessage(passThroughCodec(null, 256), ack)).toThrow(/exceeds 255/);
+    expect(() => encodeLoRaMessage(passThroughCodec(null, 0), ack)).toThrow(LoRaEncodeError);
+    expect(encodeLoRaMessage(passThroughCodec(null, 255), ack)).toHaveLength(255);
+  });
+});
+
+describe('assertHardwareCodec', () => {
+  it('rejects simulation codecs and accepts a codec declared as the wire format', () => {
+    expect(() => assertHardwareCodec(passThroughCodec(null))).toThrow(NonWireCodecError);
+    expect(() => assertHardwareCodec(UNSIGNED_LORA_CODEC)).not.toThrow();
   });
 });

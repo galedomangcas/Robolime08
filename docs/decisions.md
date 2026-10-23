@@ -185,11 +185,17 @@ tests, but block every send path**; (4) supply a newer master prompt first.
 **Chosen (team, 2026-10-23):** option 3.
 
 **Consequences**
-- `MANUAL_COMMAND_APPROVAL` is frozen `{ approved: false }`. Enabling needs
-  `approved: true` **and** an architecture-decision reference **and** a
-  hardware safety sign-off reference; `encodeLoRaMessage` and
-  `CommandTracker.submit` check all three. Tests use a TEST-ONLY approval
-  defined inside test files.
+- **Fail-closed gate:** the only input is the committed constant
+  `MANUAL_COMMANDS_APPROVED = false` in `manualCommands.ts`. No function
+  takes an approval argument or option, so constructing an "approval" object
+  or passing `approved: true` has no effect. `encodeLoRaMessage`,
+  `CommandTracker.submit` and `HalfDuplexScheduler.enqueue` (command
+  priorities) all throw `ManualCommandsNotApprovedError`. An unmocked guard
+  test (`manualCommandGate.test.ts`) exercises every path, including forged
+  arguments. Lifecycle tests open the gate only through the test runner's
+  module mock (`vi.mock`), which has no production equivalent. The
+  simulation codec refuses commands too, and the bridge session's drain
+  discards any non-`STORAGE_ACK` item.
 - Limits and timing are `null` (unconfirmed); dependent commands are rejected.
 - No gateway session path, API route or UI sends a command. CLAUDE.md is
   **not** changed: observe-only remains the approved architecture.

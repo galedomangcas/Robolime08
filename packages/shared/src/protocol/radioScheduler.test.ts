@@ -1,6 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { HalfDuplexScheduler, RADIO_SCHEDULE, type RadioScheduleConfig } from './radioScheduler';
+
+/**
+ * TEST-ONLY: the priority test needs command items, so the gate is opened for
+ * this file via the test runner's module mock. The closed production gate is
+ * covered by manualCommandGate.test.ts (no mocks).
+ */
+vi.mock('./manualCommands', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./manualCommands')>()),
+  assertManualCommandingEnabled: () => undefined,
+}));
 
 /** TEST-ONLY timing; the real window timing is unconfirmed (OPEN_ITEMS #20). */
 const TEST_ONLY_SCHEDULE: RadioScheduleConfig = {

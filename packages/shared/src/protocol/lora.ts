@@ -22,7 +22,6 @@ import {
   type CommandAbortReason,
   type CommandRejectReason,
   type ManualCommand,
-  type ManualCommandApproval,
 } from './manualCommands';
 
 export const LORA_CONTRACT_VERSION = 1;
@@ -109,7 +108,7 @@ export interface LoRaStorageAckMessage extends LoRaEnvelope {
   result: StorageAckResult;
 }
 
-/** Gateway → robot. DISABLED: encoding requires manual-command approval (D21). */
+/** Gateway → robot. DISABLED: encoding always fails while the committed gate is closed (D21). */
 export interface LoRaManualCommandMessage extends LoRaEnvelope {
   kind: 'MANUAL_COMMAND';
   /** Strictly increasing per gateway; retransmissions reuse it. Duplicate/stale key on the robot. */
@@ -414,6 +413,21 @@ export class PacketSpecNotSignedOffError extends Error {
   }
 }
 
+export class NonWireCodecError extends Error {
+  constructor(name: string) {
+    super(`Codec "${name}" is not a wire format (simulation only) and must never be connected to radio hardware.`);
+    this.name = 'NonWireCodecError';
+  }
+}
+
+/**
+ * Must be called by whatever connects a codec to a real serial port / radio
+ * (Phase 4). Rejects simulator codecs so they can never reach hardware.
+ */
+export function assertHardwareCodec(codec: LoRaPayloadCodec): void {
+  if (!codec.isWireFormat) throw new NonWireCodecError(codec.name);
+}
+
 /** Placeholder for the real codec. Refuses both directions rather than guessing a layout. */
 export const UNSIGNED_LORA_CODEC: LoRaPayloadCodec = Object.freeze({
   name: 'unsigned-placeholder',
@@ -476,11 +490,11 @@ export class LoRaEncodeError extends Error {
 
 /**
  * Validates and encodes an outgoing message. A MANUAL_COMMAND is refused
- * (ManualCommandsNotApprovedError) before the codec is touched unless manual
- * commanding is approved.
+ * (ManualCommandsNotApprovedError) before validation or the codec is touched,
+ * because the committed gate is closed (D21). There is no approval argument.
  */
-export function encodeLoRaMessage(codec: LoRaPayloadCodec, message: LoRaMessage, approval: ManualCommandApproval): Uint8Array {
-  if (message.kind === 'MANUAL_COMMAND') assertManualCommandingEnabled(approval);
+export function encodeLoRaMessage(codec: LoRaPayloadCodec, message: LoRaMessage): Uint8Array {
+  if (message.kind === 'MANUAL_COMMAND') assertManualCommandingEnabled();
   const validated = validateLoRaMessage(message);
   if (!validated.ok) {
     throw new LoRaEncodeError('INVALID_MESSAGE', validated.issues.map((i) => `${i.field}: ${i.detail}`).join('; '));

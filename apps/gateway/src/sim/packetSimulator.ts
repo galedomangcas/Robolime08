@@ -67,6 +67,8 @@ export function simulateRun(s: RunScenario): SimulatedTransmission[] {
   for (let cell = 0; cell < s.cells; cell++) {
     const at = new Date(s.startAt.getTime() + cell * s.cellIntervalMs).toISOString();
     const ph = round(4.5 + rand() * 2.5, 2);
+    // SYNTHETIC shape only: NOT the robot's dose rule or any agronomic threshold
+    // (dose and expected post-correction pH are calculated on the robot).
     const dose = s.runType === 'dosing' && ph < 6 ? round(10 + rand() * 60, 1) : 0;
     limeMl += dose;
     const base: Omit<LoRaReadingMessage, 'messageId' | 'attemptCount'> = {

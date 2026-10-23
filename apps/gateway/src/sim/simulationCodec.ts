@@ -1,4 +1,4 @@
-import type { LoRaMessage, LoRaPayloadCodec } from '@robolime/shared';
+import { assertManualCommandingEnabled, type LoRaMessage, type LoRaPayloadCodec } from '@robolime/shared';
 
 /** ASCII "SIM": a simulated payload can never be mistaken for a firmware packet. */
 const MAGIC = [0x53, 0x49, 0x4d] as const;
@@ -22,8 +22,16 @@ export class SimulationLoRaCodec implements LoRaPayloadCodec {
     return this.encodeRaw(message);
   }
 
-  /** Registers any structure, including deliberately invalid ones, for rejection tests. */
+  /**
+   * Registers any structure, including deliberately invalid ones, for
+   * rejection tests. A MANUAL_COMMAND-shaped value is refused while the
+   * manual-command gate is closed, so this codec is no bypass around
+   * `encodeLoRaMessage`.
+   */
   encodeRaw(value: unknown, totalBytes = HEADER_BYTES): Uint8Array {
+    if (typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'MANUAL_COMMAND') {
+      assertManualCommandingEnabled();
+    }
     const handle = this.nextHandle++;
     this.registry.set(handle, structuredClone(value));
     const out = new Uint8Array(Math.max(totalBytes, HEADER_BYTES));

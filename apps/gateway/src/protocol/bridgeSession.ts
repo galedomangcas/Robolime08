@@ -1,9 +1,9 @@
 import {
   HalfDuplexScheduler,
-  MANUAL_COMMAND_APPROVAL,
   SERIAL_FRAME_DELIMITER,
   SerialFrameIdCounter,
   SerialFrameReader,
+  assertHardwareCodec,
   decodeLoRaPayload,
   encodeLoRaMessage,
   encodeSerialFrame,
@@ -43,7 +43,16 @@ export interface SessionOutput {
   events: SessionEvent[];
 }
 
+/**
+ * What the session's bytes go to. `hardware` = a real serial port and radio:
+ * the codec must be a wire format (`assertHardwareCodec`), so a simulation
+ * codec is refused. `simulation` = tests and the packet simulator only.
+ */
+export type BridgeLink = 'hardware' | 'simulation';
+
 export interface BridgeSessionOptions {
+  /** Required: there is no default, so hardware use is always an explicit choice. */
+  link: BridgeLink;
   db: Database;
   codec: LoRaPayloadCodec;
   schedule: RadioScheduleConfig;
@@ -58,7 +67,13 @@ export interface BridgeSessionOptions {
  *
  * Ordering guarantee: a STORAGE_ACK is queued only after `handleUplink`
  * returned, i.e. after the SQLite commit. Manual commands have no path
- * through this class: they are not approved (D21).
+ * through this class: its queue only holds storage ACKs, and the encoder and
+ * scheduler refuse commands while the committed gate is closed (D21).
+ *
+ * Hardware boundary: this class is the only producer of bytes for the
+ * serial port. Constructed with `link: 'hardware'` it calls
+ * `assertHardwareCodec` and refuses simulation codecs. The Phase 4 serial
+ * adapter must construct it with `link: 'hardware'`.
  */
 export class BridgeProtocolSession {
   private readonly reader = new SerialFrameReader();
@@ -69,6 +84,7 @@ export class BridgeProtocolSession {
   private loraMessageId = 0;
 
   constructor(private readonly options: BridgeSessionOptions) {
+    if (options.link === 'hardware') assertHardwareCodec(options.codec);
     this.scheduler = new HalfDuplexScheduler(options.schedule);
   }
 
@@ -177,8 +193,14 @@ export class BridgeProtocolSession {
   private drain(now: Date, out: SessionOutput): void {
     for (let next = this.scheduler.next(now.getTime()); next; next = this.scheduler.next(now.getTime())) {
       let radioPayload: Uint8Array;
+      // Defence in depth: only storage ACKs may ever leave this session.
+      if (next.item.kind !== 'STORAGE_ACK') {
+        this.scheduler.discard(next.key);
+        out.events.push({ type: 'downlink_blocked', key: next.key, error: 'only STORAGE_ACK downlinks are permitted' });
+        continue;
+      }
       try {
-        radioPayload = encodeLoRaMessage(this.options.codec, { ...next.item, messageId: this.loraMessageId }, MANUAL_COMMAND_APPROVAL);
+        radioPayload = encodeLoRaMessage(this.options.codec, { ...next.item, messageId: this.loraMessageId });
       } catch (error) {
         this.scheduler.discard(next.key);
         out.events.push({ type: 'downlink_blocked', key: next.key, error: error instanceof Error ? error.message : String(error) });
@@ -186,6 +208,9 @@ export class BridgeProtocolSession {
       }
       this.loraMessageId += 1;
       const frameId = this.frameIds.take();
+      // Only one transmission is ever in flight; any older entry belongs to a
+      // timed-out attempt, and its late result must not settle this one.
+      this.txFrames.clear();
       this.txFrames.set(frameId, next.key);
       out.outgoing.push(encodeSerialFrame({ frameId, message: { type: 'LORA_TX', radioPayload } }));
     }

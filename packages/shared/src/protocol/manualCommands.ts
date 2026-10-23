@@ -4,28 +4,29 @@
  * CLAUDE.md (locked) makes the apps observe-only and forbids app-to-robot
  * downlink and app-initiated run control. The Phase 3 brief asked for a
  * manual-command flow; the team chose to have it specified and tested while
- * remaining DISABLED (docs/decisions.md D21). Every path that would encode or
- * queue a manual command calls `assertManualCommandingEnabled`, which fails
- * unless an architecture decision AND a hardware safety sign-off are recorded
- * below. Flipping `approved` alone is not enough.
+ * remaining DISABLED (docs/decisions.md D21).
+ *
+ * Fail-closed gate: the ONLY input is the committed constant below. No
+ * function takes an approval argument, so no caller can enable commands by
+ * constructing an object, passing a flag, or setting configuration. Every path
+ * that encodes, queues or schedules a manual command calls
+ * `assertManualCommandingEnabled()`. Lifting the gate requires a reviewed
+ * commit that changes this file AND the guard test in
+ * `manualCommandGate.test.ts`, after D21's conditions are met.
  *
  * Nothing here selects GPIOs, motor speeds, actuator limits or pump volumes.
  * Pump/dispense commands are deliberately absent: a manual dose would be a
  * dosing instruction from the app, which CLAUDE.md forbids outright.
  */
 
-export interface ManualCommandApproval {
-  readonly approved: boolean;
-  /** Reference to the decision-log entry that lifts the observe-only rule. */
-  readonly architectureDecision: string | null;
-  /** Reference to the hardware owner's safety sign-off (E-stop, limits, bench test). */
-  readonly hardwareSafetySignOff: string | null;
-}
+/** Committed decision: observe-only (CLAUDE.md). An ES-module `const`: importers cannot reassign it. */
+export const MANUAL_COMMANDS_APPROVED: boolean = false;
 
-/** Production approval state. Do not change without D21's conditions being met. */
-export const MANUAL_COMMAND_APPROVAL: ManualCommandApproval = Object.freeze({
-  approved: false,
+/** Record of what lifting the gate requires. Documentation only — the gate never reads it. */
+export const MANUAL_COMMAND_APPROVAL_RECORD = Object.freeze({
+  /** Decision-log entry that amends CLAUDE.md's observe-only rule. */
   architectureDecision: null,
+  /** Hardware owner's safety sign-off (E-stop, limits, bench test). */
   hardwareSafetySignOff: null,
 });
 
@@ -39,12 +40,12 @@ export class ManualCommandsNotApprovedError extends Error {
   }
 }
 
-export function isManualCommandingEnabled(approval: ManualCommandApproval): boolean {
-  return approval.approved && Boolean(approval.architectureDecision) && Boolean(approval.hardwareSafetySignOff);
+export function isManualCommandingEnabled(): boolean {
+  return MANUAL_COMMANDS_APPROVED;
 }
 
-export function assertManualCommandingEnabled(approval: ManualCommandApproval): void {
-  if (!isManualCommandingEnabled(approval)) throw new ManualCommandsNotApprovedError();
+export function assertManualCommandingEnabled(): void {
+  if (!MANUAL_COMMANDS_APPROVED) throw new ManualCommandsNotApprovedError();
 }
 
 export const MANUAL_COMMAND_TYPES = ['STOP', 'ENTER_MANUAL', 'EXIT_MANUAL', 'DRIVE'] as const;

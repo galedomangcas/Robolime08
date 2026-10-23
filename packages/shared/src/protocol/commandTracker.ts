@@ -2,7 +2,8 @@
  * Gateway-side lifecycle of manual commands: retries, timeouts, expiry, and
  * the honest reporting of outcomes. Pure and clock-injected (all times are
  * epoch milliseconds passed in by the caller) so it can be tested without
- * timers. DISABLED: `submit` throws unless manual commanding is approved (D21).
+ * timers. DISABLED: `submit` always throws while the committed gate is closed
+ * (D21); there is no approval option.
  *
  * Three different facts are tracked separately and never merged:
  *   TRANSMITTED — the bridge reports the radio sent it (not that the robot heard it)
@@ -24,7 +25,6 @@ import {
   type CommandIssue,
   type CommandRejectReason,
   type ManualCommand,
-  type ManualCommandApproval,
   type ManualCommandLimits,
 } from './manualCommands';
 
@@ -122,7 +122,6 @@ export class CommandTimingUnconfirmedError extends Error {
 export type ReportOutcome = 'applied' | 'duplicate' | 'unknown_command';
 
 export interface CommandTrackerOptions {
-  approval: ManualCommandApproval;
   limits: ManualCommandLimits;
   timing: CommandTimingConfig | null;
   /** Must continue from the last persisted value after a restart so sequences stay strictly increasing. */
@@ -166,7 +165,7 @@ export class CommandTracker {
   }
 
   submit(command: ManualCommand, ttlMs: number, nowMs: number): TrackedCommand {
-    assertManualCommandingEnabled(this.options.approval);
+    assertManualCommandingEnabled();
     this.timing();
     const issues = checkManualCommand(command, ttlMs, this.options.limits);
     if (issues.length > 0) throw new CommandRejectedLocallyError(issues);

@@ -109,7 +109,9 @@ them.**
 On (re)open the host: discards any partial input, forgets in-flight
 transmissions and the current response window (queued ACKs are kept), sends
 0x00 + `HELLO`, and expects the bridge's `HELLO`. A `LORA_TX_RESULT` that
-never arrives is abandoned after a timeout and the item is retried later.
+never arrives is abandoned after a timeout and the item is retried later;
+only the latest `LORA_TX` is tracked, so a late result for an abandoned
+attempt is ignored instead of settling the retransmission.
 
 ## 3. LoRa contract v1 (robot ⇄ gateway) — logical level
 
@@ -166,8 +168,17 @@ firmware spec is signed off, `UNSIGNED_LORA_CODEC` throws
 `PacketSpecNotSignedOffError` in both directions, so the gateway
 deliberately cannot decode or send real packets. The simulator uses
 `SimulationLoRaCodec` ("SIM" magic + an in-memory handle, `isWireFormat:
-false`), which exercises every other layer without inventing offsets. The
-firmware owner must supply, per kind: field order, widths, scaling,
+false`), which exercises every other layer without inventing offsets.
+`assertHardwareCodec` rejects any codec with `isWireFormat: false`.
+`BridgeProtocolSession` — the only producer of bytes for the serial port —
+requires an explicit `link` option with no default; `link: 'hardware'`
+calls `assertHardwareCodec` in the constructor, so a simulation codec is
+refused before any byte can reach a port. The Phase 4 serial adapter must
+construct the session with `link: 'hardware'` (that adapter does not exist
+yet). The simulation codec also refuses to register a `MANUAL_COMMAND`, so
+it is no way around the gate.
+
+The firmware owner must supply, per kind: field order, widths, scaling,
 signedness, endianness, timestamp and identifier encodings, flag bits, and the
 protocol-version field (OPEN_ITEMS #1, #9, #11).
 
@@ -192,6 +203,10 @@ robot: on STORED / DUPLICATE / CONFLICT_RECORDED → release from flash
 ```
 
 - SQLite failure (disk full, I/O error) → **no ACK** → robot retries.
+- `handleUplink` refuses to run inside an already-open transaction (it would
+  only write a savepoint, so an ACK could precede the real COMMIT) → no ACK.
+  A test confirms the row is visible to a second connection when the ACK is
+  emitted.
 - Unknown robot → **silence** (it may be another radio on the channel).
 - Run-type mismatch → `REJECTED` (nothing stored; robot keeps the record).
 - Duplicates are answered `DUPLICATE` so a robot whose ACK was lost can
@@ -245,15 +260,19 @@ downlink and app-initiated run control as out of scope. The Phase 3 brief
 asked for a manual-command flow; the team chose to have it **specified and
 tested but disabled** (D21). Therefore:
 
-- `MANUAL_COMMAND_APPROVAL` is frozen at `approved: false` with no decision
-  or hardware sign-off reference. `encodeLoRaMessage` and
-  `CommandTracker.submit` throw `ManualCommandsNotApprovedError` for every
-  command, including `STOP`. Flipping `approved` alone does not enable it;
-  both references are required.
+- The gate reads **only** the committed constant `MANUAL_COMMANDS_APPROVED =
+  false`. No function takes an approval argument, so no caller can open it by
+  constructing an object or passing a flag. `encodeLoRaMessage`,
+  `CommandTracker.submit` and the scheduler's command priorities throw
+  `ManualCommandsNotApprovedError` for every command, including `STOP`
+  (guard test: `manualCommandGate.test.ts`, no mocks). Lifting it requires a
+  reviewed commit changing that constant and the guard test, after D21's
+  conditions are met. Simulation tests open it only via `vi.mock`.
 - `MANUAL_COMMAND_LIMITS` (max drive duration, max TTL) and `COMMAND_TIMING`
   are `null`; any command depending on them is rejected `LIMIT_UNCONFIRMED`.
 - The gateway session (`BridgeProtocolSession`) has **no code path** that
-  sends a command. The local API exposes none. There is no UI.
+  sends a command: its queue is typed for storage ACKs, and its drain
+  discards anything whose kind is not `STORAGE_ACK` before encoding. The local API exposes none. There is no UI.
 - The unsigned codec cannot encode a command anyway.
 - **No pump/dispense command exists.** A manual dose would be a dosing
   instruction from the app, which CLAUDE.md forbids outright; it would need

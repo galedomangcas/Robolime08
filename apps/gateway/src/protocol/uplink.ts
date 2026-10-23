@@ -82,14 +82,25 @@ function ackFor(m: LoRaReadingMessage, result: StorageAckResult): AckDraft {
   };
 }
 
+export class UplinkInTransactionError extends Error {
+  constructor() {
+    super('handleUplink must not run inside an open transaction: its write would not be committed before the ACK');
+    this.name = 'UplinkInTransactionError';
+  }
+}
+
 /**
  * Handles one validated uplink. The STORAGE_ACK is built only after
  * `recordReading` has returned, i.e. after the SQLite transaction committed
  * (`synchronous=FULL`). Any other failure (disk full, I/O error, locked
  * database) propagates to the caller and produces NO acknowledgement, so the
  * robot keeps the record in flash and retries.
+ *
+ * Refuses to run inside an open transaction: `withTransaction` would then
+ * use a savepoint, and the ACK would precede the real COMMIT.
  */
 export function handleUplink(db: Database, message: LoRaUplinkMessage, receivedAt: Date): UplinkResult {
+  if (db.isTransaction) throw new UplinkInTransactionError();
   switch (message.kind) {
     case 'READING':
       try {

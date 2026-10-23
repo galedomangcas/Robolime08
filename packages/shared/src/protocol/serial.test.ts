@@ -61,6 +61,10 @@ describe('COBS', () => {
     ['zeros', [0, 0, 0]],
     ['mixed', [1, 0, 2, 3, 0, 0, 4]],
     ['254 non-zero bytes', Array.from({ length: 254 }, (_, i) => (i % 255) + 1)],
+    ['254 non-zero bytes then a zero', [...Array.from({ length: 254 }, () => 7), 0]],
+    ['255 non-zero bytes', Array.from({ length: 255 }, () => 9)],
+    ['508 non-zero bytes', Array.from({ length: 508 }, () => 0xff)],
+    ['trailing zero', [5, 6, 0]],
     ['600 bytes with zeros', Array.from({ length: 600 }, (_, i) => i % 256)],
   ];
   it.each(cases)('round-trips %s without emitting 0x00', (_, bytes) => {

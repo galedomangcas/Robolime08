@@ -13,6 +13,7 @@
  * laptop's SQLite commit plus a USB round trip, and the firmware owner must
  * agree to it. Pure and clock-injected; all times are epoch milliseconds.
  */
+import { assertManualCommandingEnabled } from './manualCommands';
 import type { LoRaTxResult } from './serial';
 
 export interface RadioScheduleConfig {
@@ -48,8 +49,13 @@ export class HalfDuplexScheduler<T> {
 
   constructor(private readonly config: RadioScheduleConfig) {}
 
-  /** Adds an item; an item with the same key is replaced in place (e.g. a re-ACK of a retried reading). */
+  /**
+   * Adds an item; an item with the same key is replaced in place (e.g. a
+   * re-ACK of a retried reading). Command priorities are refused while the
+   * manual-command gate is closed (D21), so no command can be queued for air.
+   */
   enqueue(key: string, priority: DownlinkPriority, item: T): void {
+    if (priority !== 'storage_ack') assertManualCommandingEnabled();
     const existing = this.queue.find((q) => q.key === key);
     if (existing) {
       existing.priority = priority;

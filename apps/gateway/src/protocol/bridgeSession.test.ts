@@ -1,9 +1,14 @@
 import {
+  LORA_CONTRACT_VERSION,
   LORA_MAX_PAYLOAD_BYTES,
+  ManualCommandsNotApprovedError,
+  NonWireCodecError,
   SerialFrameReader,
   UNSIGNED_LORA_CODEC,
+  assertHardwareCodec,
   cobsEncode,
   crc16CcittFalse,
+  encodeLoRaMessage,
   encodeSerialFrame,
   type LoRaStorageAckMessage,
   type RadioScheduleConfig,
@@ -11,7 +16,7 @@ import {
 } from '@robolime/shared';
 import { describe, expect, it } from 'vitest';
 
-import type { Database } from '../db/connection';
+import { openDatabase, type Database } from '../db/connection';
 import { initDatabase } from '../db/init';
 import { chunkStream, simulateRun, toBridgeStream, type RunScenario } from '../sim/packetSimulator';
 import { SimulationLoRaCodec } from '../sim/simulationCodec';
@@ -39,7 +44,7 @@ const scenario = (overrides: Partial<RunScenario> = {}): RunScenario => ({
 });
 
 function session(db: Database, codec = new SimulationLoRaCodec(), schedule = TEST_ONLY_SCHEDULE) {
-  return { codec, s: new BridgeProtocolSession({ db, codec, schedule, hostBuildId: 'test-host' }) };
+  return { codec, s: new BridgeProtocolSession({ link: 'simulation', db, codec, schedule, hostBuildId: 'test-host' }) };
 }
 
 /** Decodes the serial frames the gateway wrote. */
@@ -207,10 +212,10 @@ describe('BridgeProtocolSession: malformed and hostile input', () => {
   const rx = (radioPayload: Uint8Array, frameId = 1) =>
     encodeSerialFrame({ frameId, message: { type: 'LORA_RX', rssiDbm: -100, snrTenthsDb: 0, bridgeUptimeMs: 0, radioPayload } });
 
-  it('with the unsigned placeholder codec, rejects every radio packet and stores nothing', () => {
+  it('on a hardware link with the unsigned placeholder codec, rejects every radio packet and stores nothing', () => {
     const db = memoryDb();
     addTestRobot(db);
-    const s = new BridgeProtocolSession({ db, codec: UNSIGNED_LORA_CODEC, schedule: TEST_ONLY_SCHEDULE, hostBuildId: 'test-host' });
+    const s = new BridgeProtocolSession({ link: 'hardware', db, codec: UNSIGNED_LORA_CODEC, schedule: TEST_ONLY_SCHEDULE, hostBuildId: 'test-host' });
     const out = s.receive(rx(Uint8Array.of(1, 2, 3)), T0);
     expect(out.events).toEqual([{ type: 'lora_rejected', code: 'SPEC_NOT_SIGNED_OFF', rssiDbm: -100 }]);
     expect(count(db, 'readings')).toBe(0);
@@ -311,3 +316,147 @@ describe('BridgeProtocolSession: malformed and hostile input', () => {
     ]);
   });
 });
+
+describe('BridgeProtocolSession: durability ordering', () => {
+  const oneReading = (codec: SimulationLoRaCodec) =>
+    toBridgeStream(simulateRun(scenario({ cells: 1 })).filter((t) => t.message.kind === 'READING'), codec);
+
+  it('emits the ACK only once the reading is committed and visible to another connection', () => {
+    const tmp = tempDir();
+    try {
+      const file = tmp.path('field.sqlite');
+      const db = initDatabase(file, 'field', T0);
+      addTestRobot(db);
+      const { codec, s } = session(db);
+      const out = s.receive(oneReading(codec), T0);
+      expect(written([out]).map((f) => f.message.type)).toEqual(['LORA_TX']);
+      expect(db.isTransaction).toBe(false);
+      const observer = openDatabase(file);
+      expect(observer.prepare('SELECT COUNT(*) AS n FROM readings').get()?.n).toBe(1);
+      observer.close();
+      db.close();
+    } finally {
+      tmp.cleanup();
+    }
+  });
+
+  it('refuses to store or ACK while the caller holds an open transaction (savepoint would precede COMMIT)', () => {
+    const db = memoryDb();
+    addTestRobot(db);
+    const { codec, s } = session(db);
+    db.exec('BEGIN');
+    const out = s.receive(oneReading(codec), T0);
+    db.exec('ROLLBACK');
+    expect(out.events).toEqual([{ type: 'storage_failed', error: expect.stringContaining('open transaction') }]);
+    expect(out.outgoing).toEqual([]);
+    expect(count(db, 'readings')).toBe(0);
+  });
+});
+
+describe('BridgeProtocolSession: radio transmit bookkeeping and reconnection', () => {
+  const result = (refFrameId: number, frameId: number) =>
+    encodeSerialFrame({ frameId, message: { type: 'LORA_TX_RESULT', refFrameId, result: 'SENT' } });
+  const oneReading = (codec: SimulationLoRaCodec) =>
+    toBridgeStream(simulateRun(scenario({ cells: 1 })).filter((t) => t.message.kind === 'READING'), codec);
+
+  it('a late LORA_TX_RESULT for a timed-out attempt does not settle the retransmission', () => {
+    const db = memoryDb();
+    addTestRobot(db);
+    const { codec, s } = session(db, new SimulationLoRaCodec(), { ...TEST_ONLY_SCHEDULE, maxTransmissionsPerWindow: 5 });
+    const [first] = written([s.receive(oneReading(codec), T0)]);
+    const [second] = written([s.poll(new Date(T0.getTime() + TEST_ONLY_SCHEDULE.txResultTimeoutMs))]);
+    expect(first?.message.type).toBe('LORA_TX');
+    expect(second?.message.type).toBe('LORA_TX');
+
+    const late = s.receive(result(first?.frameId ?? -1, 900), T0);
+    expect(late.events).toEqual([{ type: 'unexpected_frame', frameType: 'LORA_TX_RESULT' }]);
+    expect(s.pendingDownlinks).toBe(1);
+    const current = s.receive(result(second?.frameId ?? -1, 901), T0);
+    expect(current.events).toEqual([{ type: 'tx_result', key: 'ack:TEST-ROBOT-1:SIM-RUN-1:0:0', outcome: 'sent' }]);
+    expect(s.pendingDownlinks).toBe(0);
+  });
+
+  it('a LORA_TX_RESULT that arrives after the port was reopened settles nothing', () => {
+    const db = memoryDb();
+    addTestRobot(db);
+    const { codec, s } = session(db);
+    const [sent] = written([s.receive(oneReading(codec), T0)]);
+    expect(sent?.message.type).toBe('LORA_TX');
+    s.open();
+    const late = s.receive(result(sent?.frameId ?? -1, 902), T0);
+    expect(late.events).toEqual([{ type: 'unexpected_frame', frameType: 'LORA_TX_RESULT' }]);
+    expect(s.pendingDownlinks).toBe(1); // still owed; re-sent in the next window
+  });
+
+  it('on reopen, discards a partial frame but keeps queued ACKs for the next window', () => {
+    const db = memoryDb();
+    addTestRobot(db);
+    const { codec, s } = session(db, new SimulationLoRaCodec(), { ...TEST_ONLY_SCHEDULE, responseWindowDelayMs: 100, responseWindowMs: 100 });
+    s.receive(oneReading(codec), T0); // stored; ACK waits for the window
+    expect(s.pendingDownlinks).toBe(1);
+    const partial = oneReading(codec);
+    s.receive(partial.subarray(0, 5), T0); // USB unplugged mid-frame
+    s.open();
+    expect(s.pendingDownlinks).toBe(1);
+
+    const status = toBridgeStream(simulateRun(scenario({ cells: 1 })).filter((t) => t.message.kind === 'STATUS'), codec);
+    const after = s.receive(status, new Date(T0.getTime() + 10_000));
+    expect(after.events.filter((e) => e.type === 'serial_error')).toEqual([]);
+    const sent = acksIn(written([s.poll(new Date(T0.getTime() + 10_100))]), codec);
+    expect(sent.map((a) => a.result)).toEqual(['STORED']);
+    expect(count(db, 'readings')).toBe(1);
+  });
+});
+
+describe('simulation codec and manual-command isolation', () => {
+  it('the simulation codec can never pass the hardware-codec check', () => {
+    expect(() => assertHardwareCodec(new SimulationLoRaCodec())).toThrow(NonWireCodecError);
+  });
+
+  it('a hardware-link session refuses a simulation codec at construction', () => {
+    expect(
+      () => new BridgeProtocolSession({ link: 'hardware', db: memoryDb(), codec: new SimulationLoRaCodec(), schedule: TEST_ONLY_SCHEDULE, hostBuildId: 'h' }),
+    ).toThrow(NonWireCodecError);
+  });
+
+  it('the simulation codec itself refuses to register a manual command (no bypass around the encoder)', () => {
+    const codec = new SimulationLoRaCodec();
+    const command = { contractVersion: 1, kind: 'MANUAL_COMMAND', robotId: 'R', messageId: 1, commandSeq: 1, ttlRemainingMs: 1_000, command: { type: 'STOP' } } as const;
+    expect(() => codec.encode(command)).toThrow(ManualCommandsNotApprovedError);
+    expect(() => codec.encodeRaw(command)).toThrow(ManualCommandsNotApprovedError);
+  });
+
+  it('the session drain discards anything that is not a STORAGE_ACK, even if forced into its queue', () => {
+    const db = memoryDb();
+    addTestRobot(db);
+    const { codec, s } = session(db);
+    // White-box: force a forged item past the type system into the private queue.
+    const internal = s as unknown as { scheduler: { enqueue: (key: string, priority: string, item: unknown) => void } };
+    internal.scheduler.enqueue('forged', 'storage_ack', { contractVersion: 1, kind: 'MANUAL_COMMAND', robotId: 'TEST-ROBOT-1' });
+    const out = s.receive(oneReadingStream(codec), T0);
+    expect(out.events).toContainEqual({ type: 'downlink_blocked', key: 'forged', error: 'only STORAGE_ACK downlinks are permitted' });
+    expect(written([out])).toEqual([]); // nothing forged reached the port
+    // The discard used this window's budget (1); the genuine ACK goes in the next window.
+    const next = playBridge(s, oneReadingStream(codec), 1);
+    expect(acksIn(written(next), codec).map((a) => a.kind)).toEqual(['STORAGE_ACK']);
+    expect(s.pendingDownlinks).toBe(0);
+  });
+
+  it('even the permissive simulation codec cannot encode a manual command', () => {
+    const codec = new SimulationLoRaCodec();
+    const command = {
+      contractVersion: LORA_CONTRACT_VERSION,
+      kind: 'MANUAL_COMMAND',
+      robotId: 'TEST-ROBOT-1',
+      messageId: 1,
+      commandSeq: 1,
+      ttlRemainingMs: 1_000,
+      command: { type: 'STOP' },
+    } as const;
+    expect(() => encodeLoRaMessage(codec, command)).toThrow(ManualCommandsNotApprovedError);
+  });
+});
+
+function oneReadingStream(codec: SimulationLoRaCodec): Uint8Array {
+  return toBridgeStream(simulateRun(scenario({ cells: 1 })).filter((t) => t.message.kind === 'READING'), codec);
+}

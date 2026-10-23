@@ -4,10 +4,9 @@ import {
   type CommandTimingConfig,
   type LoRaManualCommandMessage,
   type ManualCommand,
-  type ManualCommandApproval,
   type ManualCommandLimits,
 } from '@robolime/shared';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { SimulatedRobot, type RobotReport } from './simulatedRobot';
 
@@ -15,8 +14,17 @@ import { SimulatedRobot, type RobotReport } from './simulatedRobot';
  * Everything here is SIMULATION with TEST-ONLY values. It specifies the
  * robot's required safe behaviour; it does not approve manual commands or
  * physical actuation (docs/decisions.md D21).
+ *
+ * TEST-ONLY: the lossy-link tests drive the real CommandTracker, so the gate
+ * is opened for this file through the test runner's module mock of the shared
+ * source module the tracker imports. Production code has no such path; the
+ * unmocked guard test (packages/shared/src/protocol/manualCommandGate.test.ts)
+ * proves the gate is closed.
  */
-const TEST_ONLY_APPROVAL: ManualCommandApproval = { approved: true, architectureDecision: 'TEST-ONLY', hardwareSafetySignOff: 'TEST-ONLY' };
+vi.mock('../../../../packages/shared/src/protocol/manualCommands', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../packages/shared/src/protocol/manualCommands')>()),
+  assertManualCommandingEnabled: () => undefined,
+}));
 const TEST_ONLY_LIMITS: ManualCommandLimits = { maxDriveDurationMs: 2_000, maxCommandTtlMs: 5_000 };
 const TEST_ONLY_TIMING: CommandTimingConfig = { ackTimeoutMs: 500, maxTransmissions: 3, executionReportTimeoutMs: 3_000 };
 
@@ -139,7 +147,7 @@ describe('required robot behaviour (reference model)', () => {
 
 describe('gateway tracker ⇄ robot over a lossy simulated link', () => {
   function link(lost: (attempt: number, kind: 'downlink' | 'uplink') => boolean) {
-    const tracker = new CommandTracker({ approval: TEST_ONLY_APPROVAL, limits: TEST_ONLY_LIMITS, timing: TEST_ONLY_TIMING, firstSeq: 1 });
+    const tracker = new CommandTracker({ limits: TEST_ONLY_LIMITS, timing: TEST_ONLY_TIMING, firstSeq: 1 });
     const r = robot();
     const step = (nowMs: number) => {
       const due = tracker.dueTransmission(nowMs);
