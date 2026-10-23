@@ -303,3 +303,58 @@ request must therefore name this server's own address and port (or
 be `application/json` (UTF-8), so browsers need a CORS preflight that the
 server never approves. Rejected requests (`400` / `415`) never reach the API
 handler. These checks do not replace binding or session authorization.
+
+## D29 — Protocol v2 direction (PROPOSED, documentation only)
+
+**Context:** the project lead decided that a proposed six-flag error
+mapping requires a new protocol version, that v1 flag meanings stay
+frozen, and that v1 packets and records must never be reinterpreted
+with the v2 table. The proposal is documented in `docs/protocol-v2.md`.
+
+**Confirmed decision (project lead, 2026-10-24):**
+- Soil Status retains `cellIndex` for reading identity and idempotency,
+  using the existing logical key `(runId, cellIndex, seq)`. This
+  retains protocol and database identity only. It does not authorise
+  field selection, cell visualisation, progress tracking or progress
+  UI.
+
+**Approved scope (project lead, 2026-10-24):**
+- The six-flag mapping belongs to protocol v2 only. It is a proposal,
+  not an implementation authorisation.
+- Excluded from this semester's application scope: field selection,
+  cell maps, cell-progress counts (including `cellsCompleted` and
+  `totalCells`) and cell-progress UI.
+- Completion is never inferred from received readings.
+- The 3-second transmission interval is a temporary development
+  target, not a hardware-validated timing requirement.
+- The ESP32 bridge forwards the original LoRa application payload
+  unchanged. The separate USB serial framing envelope remains.
+- A successful reading ACK only follows a durable SQLite commit.
+- No robot-control downlink or app-to-robot command routes are
+  authorised. `MANUAL_COMMANDS_APPROVED` remains `false`.
+
+**Recommended (not approved for implementation):**
+- Store `contractVersion` with local and cloud records, identifying
+  existing records as v1. This is a proposed schema design only.
+- Accept v1 and v2 side by side, decode flags only with the table of
+  the record's own version, and preserve raw flag values with
+  unknown-bit diagnostics where safe validation permits.
+- Investigate retaining pump, drive and storage faults through the
+  existing component-status field.
+- Keep the v1 status delivery semantics (not acknowledged, not
+  retried) unchanged in v2.
+- Extend the local API additively and version-aware, if backward
+  compatibility can be maintained.
+- Reject unsupported versions without storing or acknowledging them.
+
+**Unresolved (items in `docs/OPEN_ITEMS.md`):** on-air version
+representation (26); v2 error-flag table and reserved bits (27);
+component-status encoding and runtime fault semantics (28); v2 status
+identity, deduplication, retention and client display (29);
+communication-loss rules and gateway connection freshness (30); ACK
+compatibility and return routing (31); sensor-to-component mapping
+(32); 3-second feasibility evidence (33); formal requirements and
+protocol approval for v2 (34).
+
+**This entry authorises no implementation, schema change, migration,
+API change, firmware change or `CLAUDE.md` modification.**
