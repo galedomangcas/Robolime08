@@ -213,10 +213,49 @@ class Fields {
 
   timestamp(field: string): string {
     const v = this.o[field];
-    if (typeof v !== 'string' || !ISO_UTC.test(v) || !Number.isFinite(Date.parse(v))) {
+
+    if (typeof v !== 'string' || !ISO_UTC.test(v)) {
       this.fail(field, 'expected an ISO-8601 UTC timestamp');
       return '';
     }
+
+    const year = Number(v.slice(0, 4));
+    const month = Number(v.slice(5, 7));
+    const day = Number(v.slice(8, 10));
+    const hour = Number(v.slice(11, 13));
+    const minute = Number(v.slice(14, 16));
+    const second = Number(v.slice(17, 19));
+
+    const isLeapYear =
+      year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+
+    const daysInMonth = [
+      31,
+      isLeapYear ? 29 : 28,
+      31,
+      30,
+      31,
+      30,
+      31,
+      31,
+      30,
+      31,
+      30,
+      31,
+    ][month - 1] ?? 0;
+
+    if (
+      day < 1 ||
+      day > daysInMonth ||
+      hour > 23 ||
+      minute > 59 ||
+      second > 59 ||
+      !Number.isFinite(Date.parse(v))
+    ) {
+      this.fail(field, 'expected a valid ISO-8601 UTC calendar timestamp');
+      return '';
+    }
+
     return v;
   }
 

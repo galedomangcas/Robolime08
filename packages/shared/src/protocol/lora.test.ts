@@ -84,6 +84,61 @@ describe('validateLoRaMessage', () => {
     );
   });
 
+  describe('timestamps (READING robotRecordedAt, STATUS and COMMAND_STATUS robotReportedAt)', () => {
+    const timestamped: { kind: string; field: string; message: object }[] = [
+      { kind: 'READING', field: 'robotRecordedAt', message: reading },
+      {
+        kind: 'STATUS',
+        field: 'robotReportedAt',
+        message: {
+          contractVersion: 1, kind: 'STATUS', robotId: 'TEST-ROBOT-1', messageId: 11, stateCode: 1, errorFlags: 0, componentFlags: null,
+          batteryVoltage: 12.4, totalLimeCommandedMl: 0, cellsCompleted: 0, totalCells: 20, robotReportedAt: '2026-03-01T01:02:03Z',
+        },
+      },
+      {
+        kind: 'COMMAND_STATUS',
+        field: 'robotReportedAt',
+        message: {
+          contractVersion: 1, kind: 'COMMAND_STATUS', robotId: 'R', messageId: 2, commandSeq: 4, execution: 'COMPLETED', abortReason: null,
+          robotReportedAt: '2026-03-01T00:00:00Z',
+        },
+      },
+    ];
+
+    const valid = ['2024-02-29T12:00:00Z', '2000-02-29T12:00:00Z', '2026-01-31T23:59:59Z', '2026-03-01T01:02:03.000Z'];
+    const invalid = [
+      '2025-02-29T12:00:00Z', // not a leap year
+      '1900-02-29T12:00:00Z', // century, not a leap year
+      '2026-02-30T12:00:00Z',
+      '2026-04-31T12:00:00Z',
+      '2026-00-10T12:00:00Z',
+      '2026-13-01T12:00:00Z',
+      '2026-03-00T12:00:00Z',
+      '2026-03-01T24:00:00Z',
+      '2026-03-01T12:60:00Z',
+      '2026-03-01T12:00:60Z',
+      '2026-03-01 12:00:00', // space instead of T
+    ];
+
+    for (const { kind, field, message } of timestamped) {
+      it(`${kind}.${field} accepts real calendar timestamps and keeps them exactly as sent`, () => {
+        for (const ts of valid) {
+          const result = validateLoRaMessage({ ...message, [field]: ts });
+          expect(result.ok, ts).toBe(true);
+          if (result.ok) expect((result.message as unknown as Record<string, unknown>)[field]).toBe(ts);
+        }
+      });
+
+      it(`${kind}.${field} rejects impossible dates and times instead of shifting them`, () => {
+        for (const ts of invalid) {
+          const result = validateLoRaMessage({ ...message, [field]: ts });
+          expect(result, ts).toMatchObject({ ok: false, code: 'INVALID_FIELD' });
+          if (!result.ok) expect(result.issues.map((i) => i.field), ts).toEqual([field]);
+        }
+      });
+    }
+  });
+
   it('accepts pH boundary values 0 and 14 and a missing GPS fix / expected pH', () => {
     for (const ph of [0, 14]) expect(validateLoRaMessage({ ...reading, ph }).ok).toBe(true);
     expect(validateLoRaMessage({ ...reading, gps: null, expectedPostCorrectionPh: null }).ok).toBe(true);
