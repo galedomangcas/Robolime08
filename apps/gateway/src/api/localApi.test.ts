@@ -217,4 +217,12 @@ describe('local API authorization boundary', () => {
     expect(api.handle({ method: 'POST', path: API_V1_ROUTES.pairing, body: 'x' }).status).toBe(400);
     expect(api.handle({ method: 'GET', path: API_V1_ROUTES.pairing }).status).toBe(405);
   });
+
+  it('answers malformed percent-encoding in a run id with 400 instead of throwing', () => {
+    const { api } = setup();
+    const token = pair(api, TEST_ONLY_PAIRING_CODE);
+    const res = get(api, '/api/v1/runs/%E0%A4%A/readings', token);
+    expect(res.status).toBe(400);
+    expect(errorCode(res)).toBe('BAD_REQUEST');
+  });
 });

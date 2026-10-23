@@ -73,6 +73,9 @@ const ERROR_STATUS: Record<ApiErrorCode, number> = {
   NO_ACTIVE_FIELD: 404,
   BAD_REQUEST: 400,
   METHOD_NOT_ALLOWED: 405,
+  PAYLOAD_TOO_LARGE: 413,
+  UNSUPPORTED_MEDIA_TYPE: 415,
+  INTERNAL_ERROR: 500,
 };
 
 const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
@@ -87,11 +90,17 @@ const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
   NO_ACTIVE_FIELD: 'No field has been set up for this robot on the gateway yet.',
   BAD_REQUEST: 'The request was not valid.',
   METHOD_NOT_ALLOWED: 'This operation is not available.',
+  PAYLOAD_TOO_LARGE: 'The request is too large.',
+  UNSUPPORTED_MEDIA_TYPE: 'Send the request body as JSON with Content-Type: application/json.',
+  INTERNAL_ERROR: 'The gateway could not complete this request. Try again; if it keeps failing, check the gateway laptop.',
 };
 
-function fail(code: ApiErrorCode, message: string = ERROR_MESSAGES[code]): ApiResponse {
+/** Builds a contract-shaped error response; also used by the HTTP transport. */
+export function apiErrorResponse(code: ApiErrorCode, message: string = ERROR_MESSAGES[code]): ApiResponse {
   return { status: ERROR_STATUS[code], body: { error: { code, message } } };
 }
+
+const fail = apiErrorResponse;
 
 function ok(body: ApiResponseBody, status = 200): ApiResponse {
   return { status, body };
@@ -209,7 +218,12 @@ export function createLocalApi(options: LocalApiOptions) {
     const sub = RUN_SUB_ROUTE.exec(path);
     if (sub) {
       if (req.method !== 'GET') return fail('METHOD_NOT_ALLOWED');
-      const runId = decodeURIComponent(sub[1] ?? '');
+      let runId: string;
+      try {
+        runId = decodeURIComponent(sub[1] ?? '');
+      } catch {
+        return fail('BAD_REQUEST', 'The run identifier in the path is not valid.');
+      }
       const run = getRun(db, runId);
       // Other robots' runs and verification runs are indistinguishable from missing runs.
       if (!run || run.robotId !== robotId || run.runType !== 'dosing') {

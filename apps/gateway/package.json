@@ -15,7 +15,8 @@
     "pairing:provision": "tsx src/cli/provision-pairing.ts",
     "db:seed:demo": "tsx src/cli/seed-demo.ts",
     "cloud-seed:generate": "tsx src/cli/generate-cloud-seed.ts",
-    "db:backup": "tsx src/cli/db-backup.ts"
+    "db:backup": "tsx src/cli/db-backup.ts",
+    "serve": "tsx src/cli/serve.ts"
   },
   "dependencies": {
     "@robolime/shared": "0.1.0",

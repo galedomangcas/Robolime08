@@ -1,0 +1,71 @@
+import { createLocalApi } from '../api/localApi';
+import type { Database } from '../db/connection';
+import { openExistingDatabase } from '../db/init';
+import { migrate } from '../db/migrate';
+import type { Clock } from '../db/time';
+import { resolveHttpConfig } from './config';
+import { startGatewayHttpServer, type HttpErrorLog, type HttpRequestLog } from './server';
+
+export interface ServeOptions {
+  dbPath: string;
+  env: Readonly<Record<string, string | undefined>>;
+  /** CLI flags; they take precedence over the environment. */
+  host?: string;
+  port?: string;
+  /** Tests only: ephemeral port, bypassing the 1–65535 operator range. */
+  portOverride?: number;
+  clock?: Clock;
+  onRequest?: (entry: HttpRequestLog) => void;
+  onError?: (entry: HttpErrorLog) => void;
+}
+
+export interface RunningGateway {
+  readonly url: string;
+  readonly host: string;
+  readonly port: number;
+  /** Closes the HTTP server first, then the database. Safe to call twice. */
+  close(): Promise<void>;
+  /** Drops in-flight connections; used only if a graceful close hangs. */
+  forceCloseConnections(): void;
+}
+
+/**
+ * Starts the local API over HTTP against an EXISTING gateway database.
+ * Configuration is validated before the database is opened. The database is
+ * never created, reset or seeded here; pending migrations are applied exactly
+ * as the provisioning commands do (applied migrations are checksum-verified).
+ * Pairing and field-selection requests write through the normal API.
+ */
+export async function startGateway(options: ServeOptions): Promise<RunningGateway> {
+  const config = resolveHttpConfig(options.env, { host: options.host, port: options.port });
+
+  const db: Database = openExistingDatabase(options.dbPath);
+  try {
+    migrate(db);
+    const api = createLocalApi({ db, clock: options.clock });
+    const http = await startGatewayHttpServer({
+      api,
+      host: config.host,
+      port: options.portOverride ?? config.port,
+      onRequest: options.onRequest,
+      onError: options.onError,
+    });
+
+    let closing: Promise<void> | null = null;
+    return {
+      url: http.url,
+      host: http.host,
+      port: http.port,
+      close: () => {
+        closing ??= http.close().finally(() => {
+          if (db.isOpen) db.close();
+        });
+        return closing;
+      },
+      forceCloseConnections: () => http.server.closeAllConnections(),
+    };
+  } catch (error) {
+    if (db.isOpen) db.close();
+    throw error;
+  }
+}

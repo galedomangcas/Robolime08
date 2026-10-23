@@ -1,14 +1,16 @@
 # Local field gateway: storage, pairing, and API contract
 
-Status: **Phase 3**. The durable SQLite store, migrations, local pairing,
+Status: **Phase 4, milestone 1**. The durable SQLite store, migrations, local pairing,
 sessions, the read-only API handler, the sync outbox contract, and demo
 seeding (Phase 2) are implemented and unit tested in `apps/gateway`. Phase 3
 added the protocol layer: `src/protocol/uplink.ts` (validated uplink →
 SQLite → storage ACK, write before ACK) and `src/protocol/bridgeSession.ts`
 (USB serial bytes in/out, half-duplex ACK scheduling), plus the simulator in
-`src/sim/` — see [`protocol.md`](protocol.md). **Not built yet:** the real
-LoRa byte codec (spec unsigned), the `serialport` connection and timers, the
-LAN HTTP server, and the cloud sync worker (Phase 4).
+`src/sim/` — see [`protocol.md`](protocol.md). Phase 4 milestone 1 added a
+**loopback-only** HTTP server for the local API (`src/http/`, `npm run serve`).
+**Not built yet:** LAN binding and pairing rate limiting, web-app hosting,
+live updates, the real LoRa byte codec (spec unsigned), the `serialport`
+connection and timers, and the cloud sync worker.
 
 Everything in this document works with **no internet** and no Supabase.
 
@@ -37,6 +39,7 @@ requires a `field` database.
 | Register the robot this gateway serves | `npm run robot:provision -w @robolime/gateway -- --db <file> --source-id <firmware robot id> --name "<name>"` |
 | Create a pairing code (shown once) | `npm run pairing:provision -w @robolime/gateway -- --db <file> --robot <firmware robot id>` |
 | Back up the live database | `npm run db:backup -w @robolime/gateway -- --db <file> --out <new file>` |
+| Serve the local API over HTTP, **loopback only** (see below) | `npm run serve -w @robolime/gateway -- --db <file> [--host 127.0.0.1] [--port 8780]` |
 | Load the **synthetic** demo dataset into a separate demo DB | `npm run db:seed:demo -w @robolime/gateway -- --db <demo file>` |
 | Regenerate the cloud demo seed SQL | `npm run cloud-seed:generate -w @robolime/gateway` |
 | Tests | `npm test -w @robolime/gateway` |
@@ -174,14 +177,16 @@ multi-user authentication and does not identify a person.
 - Never log, commit, or paste a pairing code or token. Tests use a fixture
   named `TEST_ONLY_PAIRING_CODE` that no CLI or seed ever provisions.
 - Known limits: plain HTTP on the field LAN (no TLS) means a device on the
-  same Wi-Fi could observe tokens; request rate limiting arrives with the HTTP
-  server in Phase 4; anyone with the laptop's disk can read the stored data.
+  same Wi-Fi could observe tokens; **pairing-attempt rate limiting is not
+  implemented yet** and is a prerequisite before the API is exposed on the
+  LAN (OPEN_ITEMS #16), which is why the HTTP server is loopback-only for
+  now; anyone with the laptop's disk can read the stored data.
 
 ## Local API contract (v1)
 
 Defined in `packages/shared/src/api/v1.ts`; implemented transport-independently
-in `apps/gateway/src/api/localApi.ts` (the HTTP server in Phase 4 only adapts
-requests to it). All responses are JSON. **There are no robot-control routes.**
+in `apps/gateway/src/api/localApi.ts` (the HTTP server in `src/http/` only
+adapts requests to it). All responses are JSON. **There are no robot-control routes.**
 
 | Method & path | Auth | Returns |
 |---|---|---|
@@ -207,7 +212,54 @@ missing run all return the same `404 NOT_FOUND`.
 | `NO_PAIRING_PROVISIONED` | 503 | Operator must run `pairing:provision` |
 | `INVALID_PAIRING_CODE` | 401 | Wrong code |
 | `NOT_FOUND` / `NO_ACTIVE_FIELD` | 404 | Not available for the paired robot |
-| `BAD_REQUEST` / `METHOD_NOT_ALLOWED` | 400 / 405 | Client error |
+| `BAD_REQUEST` / `METHOD_NOT_ALLOWED` | 400 / 405 | Client error (also: `Host` header not accepted) |
+| `PAYLOAD_TOO_LARGE` | 413 | Request body over 16 KiB (HTTP server) |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | POST body not sent as `application/json` (HTTP server) |
+| `INTERNAL_ERROR` | 500 | Unexpected gateway failure; details only in the gateway log |
+
+## Local HTTP server (loopback only)
+
+`npm run serve -w @robolime/gateway -- --db <file>` serves the API above over
+HTTP. It opens an **existing** gateway database (it never creates, resets or
+seeds one), applies pending migrations the same way `pairing:provision`
+does, and stops cleanly on Ctrl+C (HTTP server first, then the database).
+
+| Setting | Source (highest first) | Default | Accepted |
+|---|---|---|---|
+| Host | `--host`, `GATEWAY_HOST` | `127.0.0.1` | **loopback IP literals only** (`127.0.0.0/8`, `::1`) |
+| Port | `--port`, `GATEWAY_PORT` | `8780` | integer 1–65535 |
+
+- **Loopback only (decision D28).** `0.0.0.0`, `::`, LAN addresses and host
+  names are refused with an error — never silently replaced. Phones and
+  tablets on the field Wi-Fi therefore **cannot** reach this server yet; LAN
+  binding needs pairing rate limiting first (OPEN_ITEMS #16).
+- Only `GET` and `POST` under `/api/v1/`; other methods get `405` (with
+  `Allow: GET, POST`) and other paths `404`. No web app or static files are
+  served yet, and no CORS headers are sent.
+- **Browser-originated requests.** Every request must carry a `Host` header
+  naming this server's own bound address and port — `127.0.0.1:<port>`
+  (`[::1]:<port>` when bound to IPv6) or `localhost:<port>`; anything else,
+  including a missing `Host`, gets `400` before reaching the API (this blocks
+  DNS-rebinding pages). Every POST must be `Content-Type: application/json`
+  (an optional `charset` must be UTF-8); anything else gets
+  `415 UNSUPPORTED_MEDIA_TYPE` before the body is read, so a web page cannot
+  send a cross-site "simple" request without a CORS preflight, which this
+  server never approves. These checks complement — they do not replace —
+  loopback-only binding and session authorization.
+- Request bodies are limited to **16 KiB** (`413 PAYLOAD_TOO_LARGE`);
+  malformed JSON gets `400 BAD_REQUEST`. Timeouts: headers 10 s, whole
+  request 15 s, idle keep-alive 5 s. Open connections are checked every
+  second (Node's default is every 30 s), so a stalled or slowly trickled
+  request is closed with `408` within about 1 s of its timeout (measured on
+  loopback: 10.1 s for stalled headers, 15.1 s for a stalled or trickled body).
+- Unexpected failures return a generic `500 INTERNAL_ERROR`; the gateway
+  logs only the error class.
+- The request log contains only time, method, path (without query string),
+  status and duration — never headers, `Authorization`, bodies, pairing codes
+  or tokens.
+- Not part of this server: LAN access, the web app, live updates, the serial
+  bridge and cloud sync. Nothing here has been tested on a phone, a LAN or
+  hardware.
 
 ## Demo data (synthetic only)
 

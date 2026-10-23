@@ -42,7 +42,13 @@ export type ApiErrorCode =
   | 'NOT_FOUND'
   | 'NO_ACTIVE_FIELD'
   | 'BAD_REQUEST'
-  | 'METHOD_NOT_ALLOWED';
+  | 'METHOD_NOT_ALLOWED'
+  /** Request body exceeds the gateway's JSON size limit (HTTP transport). */
+  | 'PAYLOAD_TOO_LARGE'
+  /** POST body is not declared as `application/json` (HTTP transport). */
+  | 'UNSUPPORTED_MEDIA_TYPE'
+  /** Unexpected gateway failure; details are logged on the gateway only, never returned. */
+  | 'INTERNAL_ERROR';
 
 export interface ApiErrorBody {
   error: { code: ApiErrorCode; message: string };

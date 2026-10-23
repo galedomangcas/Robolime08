@@ -276,3 +276,30 @@ Node.js 25 is excluded because the locked toolchain does not declare support
 for it. The open-ended `>=26.0.0` range follows upstream package engine
 declarations; compatibility with future Node.js major releases remains
 unverified until tested.
+
+## D28 — Local HTTP server: plain `node:http`, loopback-only (Phase 4 M1)
+
+**Options:** (1) a web framework (Express/Fastify: a new dependency for eight
+routes); (2) **`node:http` around the existing transport-independent handler**
+(no dependency; routing, validation and authorization stay in
+`createLocalApi`, D16).
+
+**Chosen:** (2). The adapter only maps HTTP to `ApiRequest`/`ApiResponse`,
+adds a 16 KiB body limit, request/header/keep-alive timeouts, JSON error
+bodies (`PAYLOAD_TOO_LARGE`, `INTERNAL_ERROR` added to the v1 error codes)
+and a log that never contains headers, bodies, pairing codes or tokens.
+
+**Bind policy:** default `127.0.0.1:8780`; only loopback IP literals are
+accepted, and wildcard or LAN addresses are refused with an error instead of
+being silently replaced. Pairing-attempt rate limiting (OPEN_ITEMS #16) must
+exist before LAN binding is allowed; until then the field Wi-Fi cannot reach
+the API, which is intentional. Tested on loopback only; no LAN, phone or
+hardware testing has been done.
+
+**Browser-originated requests (M1 review fix):** loopback binding alone does
+not stop a web page on the same laptop from reaching the server. Every
+request must therefore name this server's own address and port (or
+`localhost:<port>`) in `Host` — defeating DNS rebinding — and every POST must
+be `application/json` (UTF-8), so browsers need a CORS preflight that the
+server never approves. Rejected requests (`400` / `415`) never reach the API
+handler. These checks do not replace binding or session authorization.
