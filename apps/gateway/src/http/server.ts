@@ -216,8 +216,11 @@ export function createRequestListener(options: GatewayHttpServerOptions, allowed
       path,
       authorization: req.headers.authorization ?? null,
       body,
+      // The socket's peer address only. Forwarded headers (X-Forwarded-For,
+      // Forwarded) are never trusted: no proxy sits in front of this server.
+      clientAddress: req.socket.remoteAddress ?? null,
     });
-    send(res, response);
+    send(res, response, response.retryAfterSeconds === undefined ? {} : { 'Retry-After': String(response.retryAfterSeconds) });
     return response.status;
   }
 

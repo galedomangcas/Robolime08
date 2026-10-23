@@ -69,6 +69,135 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('pairing-attempt rate limiting (D30: 5 failed attempts per client address per 15 minutes)', () => {
+  const MINUTE = 60_000;
+  const A = '192.0.2.10';
+  const B = '192.0.2.20';
+
+  /** Same fixture, but with a clock the test can move. */
+  function limited() {
+    const fixture = setup();
+    let now = NOW.getTime();
+    const api = createLocalApi({ db: fixture.db, clock: () => new Date(now) });
+    const advance = (ms: number) => {
+      now += ms;
+    };
+    const attempt = (body: unknown, clientAddress: string | null = A) =>
+      api.handle({ method: 'POST', path: API_V1_ROUTES.pairing, body, clientAddress });
+    const wrong = (clientAddress: string | null = A) => attempt({ pairingCode: 'WRNG-WRNG-WRNG' }, clientAddress);
+    const right = (clientAddress: string | null = A) => attempt({ pairingCode: TEST_ONLY_PAIRING_CODE }, clientAddress);
+    const sessions = () => Number(fixture.db.prepare('SELECT COUNT(*) AS n FROM local_sessions').get()?.n);
+    return { ...fixture, api, advance, attempt, wrong, right, sessions };
+  }
+
+  it('answers the first five wrong codes normally and refuses the sixth attempt with 429', () => {
+    const t = limited();
+    for (let i = 1; i <= 5; i += 1) {
+      const res = t.wrong();
+      expect(res.status, `attempt ${i}`).toBe(401);
+      expect(errorCode(res)).toBe('INVALID_PAIRING_CODE');
+    }
+    const sixth = t.wrong();
+    expect(sixth.status).toBe(429);
+    expect(errorCode(sixth)).toBe('PAIRING_RATE_LIMITED');
+    expect(sixth.retryAfterSeconds).toBe(15 * 60);
+    expect((sixth.body as ApiErrorBody).error.message).toContain('15 minutes');
+  });
+
+  it('a limited client learns nothing: a correct code gets the same 429 and creates no session', () => {
+    const t = limited();
+    for (let i = 0; i < 5; i += 1) t.wrong();
+    const before = t.sessions();
+    const withCorrect = t.right();
+    const withWrong = t.wrong();
+    const malformed = t.attempt('not json object');
+
+    expect(withCorrect).toEqual(withWrong);
+    expect(malformed).toEqual(withWrong);
+    expect(withCorrect.status).toBe(429);
+    expect(t.sessions()).toBe(before);
+    const serialized = JSON.stringify(withCorrect);
+    expect(serialized).not.toContain(TEST_ONLY_PAIRING_CODE);
+    expect(serialized).not.toContain('WRNG');
+    expect(serialized).not.toContain('sessionToken');
+    expect(serialized).not.toMatch(/correct code|robot/i);
+  });
+
+  it('counts each client address separately', () => {
+    const t = limited();
+    for (let i = 0; i < 5; i += 1) t.wrong(A);
+    expect(t.wrong(A).status).toBe(429);
+    expect(t.wrong(B).status).toBe(401);
+    expect(t.right(B).status).toBe(201);
+  });
+
+  it('lifts the limit exactly 15 minutes after the oldest counted failure', () => {
+    const t = limited();
+    for (let i = 0; i < 5; i += 1) t.wrong();
+    t.advance(15 * MINUTE - 1_000);
+    const late = t.right();
+    expect(late.status).toBe(429);
+    expect(late.retryAfterSeconds).toBe(1);
+    expect((late.body as ApiErrorBody).error.message).toContain('1 minute,');
+    t.advance(1_000);
+    expect(t.right().status).toBe(201);
+  });
+
+  it('does not count successful pairings as failures', () => {
+    const t = limited();
+    for (let i = 0; i < 4; i += 1) t.wrong();
+    for (let i = 0; i < 3; i += 1) expect(t.right().status).toBe(201);
+    expect(t.wrong().status).toBe(401); // the 5th failure, not the 8th attempt
+    expect(t.right().status).toBe(429);
+  });
+
+  it('does not count malformed requests, wrong methods or an unprovisioned gateway (no code is tested)', () => {
+    const t = limited();
+    for (let i = 0; i < 10; i += 1) {
+      expect(t.attempt({ code: 'x' }).status).toBe(400);
+      expect(t.attempt({ pairingCode: 'x'.repeat(65) }).status).toBe(400);
+      expect(t.api.handle({ method: 'GET', path: API_V1_ROUTES.pairing, clientAddress: A }).status).toBe(405);
+    }
+    for (let i = 0; i < 5; i += 1) expect(t.wrong().status).toBe(401);
+    expect(t.wrong().status).toBe(429);
+
+    const empty = initDatabase(':memory:', 'demo', T0);
+    const unprovisioned = createLocalApi({ db: empty, clock: () => NOW });
+    for (let i = 0; i < 8; i += 1) {
+      const res = unprovisioned.handle({ method: 'POST', path: API_V1_ROUTES.pairing, body: { pairingCode: 'WRNG-WRNG-WRNG' }, clientAddress: A });
+      expect(errorCode(res)).toBe('NO_PAIRING_PROVISIONED');
+    }
+  });
+
+  it('repeated requests while limited neither bypass nor extend the limit', () => {
+    const t = limited();
+    for (let i = 0; i < 5; i += 1) t.wrong();
+    for (let i = 0; i < 25; i += 1) expect(t.right().status).toBe(429);
+    t.advance(15 * MINUTE);
+    expect(t.right().status).toBe(201);
+  });
+
+  it('does not affect other endpoints: existing sessions keep working and unpaired requests stay 401', () => {
+    const t = limited();
+    const token = pair(t.api, TEST_ONLY_PAIRING_CODE);
+    for (let i = 0; i < 5; i += 1) t.wrong();
+    expect(t.wrong().status).toBe(429);
+
+    expect(get(t.api, API_V1_ROUTES.runs, token).status).toBe(200);
+    expect(get(t.api, API_V1_ROUTES.session, token).status).toBe(200);
+    const unpaired = get(t.api, API_V1_ROUTES.runs);
+    expect(unpaired.status).toBe(401);
+    expect(errorCode(unpaired)).toBe('UNPAIRED');
+  });
+
+  it('fails closed when the transport reports no client address: such requests share one counter', () => {
+    const t = limited();
+    for (let i = 0; i < 5; i += 1) t.wrong(null);
+    expect(t.api.handle({ method: 'POST', path: API_V1_ROUTES.pairing, body: { pairingCode: TEST_ONLY_PAIRING_CODE } }).status).toBe(429);
+    expect(t.right(A).status).toBe(201);
+  });
+});
+
 describe('local API authorization boundary', () => {
   it('1. denies an unpaired client on every protected route', () => {
     const { api, dosingRun } = setup();

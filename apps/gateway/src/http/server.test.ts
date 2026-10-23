@@ -337,6 +337,72 @@ describe('gateway HTTP server: internal errors and logging', () => {
   });
 });
 
+describe('gateway HTTP server: pairing-attempt rate limiting (D30)', () => {
+  const wrongPairing = (server: RunningGatewayHttpServer, headers: Record<string, string> = {}) =>
+    raw(server, {
+      method: 'POST',
+      path: API_V1_ROUTES.pairing,
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ pairingCode: 'WRNG-WRNG-WRNG' }),
+    });
+
+  it('limits by the socket address and ignores forwarded headers', async () => {
+    const inner = fixture().api;
+    const seen: (string | null | undefined)[] = [];
+    const recording = {
+      handle: (req: Parameters<LocalApi['handle']>[0]) => {
+        seen.push(req.clientAddress);
+        return inner.handle(req);
+      },
+    } as LocalApi;
+    const server = await start(recording);
+    // Every request claims a different origin; all really come from 127.0.0.1.
+    for (let i = 1; i <= 5; i += 1) {
+      const res = await wrongPairing(server, { 'X-Forwarded-For': `203.0.113.${i}`, Forwarded: `for=198.51.100.${i}`, 'X-Real-IP': `192.0.2.${i}` });
+      expect(res.status).toBe(401);
+    }
+    const spoofed = await wrongPairing(server, { 'X-Forwarded-For': '203.0.113.200' });
+    expect(spoofed.status).toBe(429);
+    expect(code(spoofed)).toBe('PAIRING_RATE_LIMITED');
+    // The handler received the socket's real peer address every time (not null, not a header value).
+    expect(seen).toEqual(Array(6).fill('127.0.0.1'));
+  });
+
+  it('answers 429 with Retry-After, the usual JSON headers, and no secrets; logs only method, path and status', async () => {
+    const logs = { req: [] as HttpRequestLog[], err: [] as HttpErrorLog[] };
+    const { api, db } = fixture();
+    const server = await start(api, logs);
+    const token = await pair(server); // before the limit: a valid session
+    for (let i = 0; i < 5; i += 1) await wrongPairing(server);
+
+    const limited = await raw(server, {
+      method: 'POST',
+      path: API_V1_ROUTES.pairing,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pairingCode: TEST_ONLY_OTHER_PAIRING_CODE }),
+    });
+    expect(limited.status).toBe(429);
+    expect(limited.headers['retry-after']).toBe('900');
+    expect(limited.headers['content-type']).toBe('application/json; charset=utf-8');
+    expect(limited.headers['cache-control']).toBe('no-store');
+    expect(limited.text).not.toContain(TEST_ONLY_OTHER_PAIRING_CODE);
+    expect(limited.text).not.toContain('sessionToken');
+    expect(sessionCount(db)).toBe(1);
+
+    // Other routes are unaffected for the same client.
+    expect((await raw(server, { method: 'GET', path: API_V1_ROUTES.runs, headers: bearer(token) })).status).toBe(200);
+    // Still limited: every further pairing attempt carries Retry-After; ordinary responses do not.
+    expect((await wrongPairing(server)).headers['retry-after']).toBe('900');
+    expect((await raw(server, { method: 'GET', path: API_V1_ROUTES.runs })).headers['retry-after']).toBeUndefined();
+
+    const serialized = JSON.stringify(logs);
+    for (const secret of [token, TEST_ONLY_PAIRING_CODE, TEST_ONLY_OTHER_PAIRING_CODE, 'WRNG-WRNG-WRNG', '127.0.0.1']) {
+      expect(serialized).not.toContain(secret);
+    }
+    expect(logs.req.map((e) => e.status)).toEqual([201, 401, 401, 401, 401, 401, 429, 200, 429, 401]);
+  });
+});
+
 /** Wraps an API so tests can prove a rejected request never reached the handler. */
 function counted(api: LocalApi) {
   let calls = 0;

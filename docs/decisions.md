@@ -358,3 +358,35 @@ protocol approval for v2 (34).
 
 **This entry authorises no implementation, schema change, migration,
 API change, firmware change or `CLAUDE.md` modification.**
+
+## D30 — Pairing-attempt rate limiting: per client IP, in memory (Phase 4 M2)
+
+**Approved policy (project lead):** at most 5 failed pairing attempts per
+client IP address within 15 minutes; counters in memory only, reset on
+gateway restart; LAN binding stays out of scope and unauthorised.
+
+**Options considered for the key:** (1) one gateway-wide counter: simplest,
+but anyone could lock the real owner out; (2) **per client IP** (chosen):
+keeps other devices usable, at the cost of sharing a counter behind one
+address and giving an attacker with many addresses more attempts; (3)
+counters persisted in SQLite: survive restarts but need a migration
+(rejected for this milestone).
+
+**Implementation:** `apps/gateway/src/pairing/rateLimit.ts`, applied inside
+the transport-independent API handler (D16) so it is tested directly; the
+HTTP server only supplies the socket's peer address
+(`socket.remoteAddress`) and turns `retryAfterSeconds` into a `Retry-After`
+header. Forwarded headers are never trusted (no proxy exists). Sliding
+window: a failure counts while younger than 15 minutes; with 5 counted, the
+address gets `429 PAIRING_RATE_LIMITED` (new additive error code) until the
+oldest expires. Only verified wrong codes count; malformed requests, wrong
+methods, `NO_PAIRING_PROVISIONED`, successes and refused attempts do not. A
+limited address is refused by the handler before the body is validated or
+any code is verified, so the response reveals nothing about the code (the
+HTTP server's own 400/413/415 checks on unreadable bodies still run first,
+for every client). The check and the record run synchronously in one
+handler call, so concurrent requests cannot interleave between them. No
+schema change.
+
+**Not verified:** behaviour on a real LAN, a phone, or behind a NAT/hotspot;
+tested with unit, API-handler and loopback HTTP tests only.

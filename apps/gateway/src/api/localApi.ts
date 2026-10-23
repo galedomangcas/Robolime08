@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 
 import { bool, num, str, strOrNull, type Database, type Row } from '../db/connection';
 import { systemClock, toCanonicalUtc, type Clock } from '../db/time';
+import { PairingAttemptLimiter } from '../pairing/rateLimit';
 import { DEFAULT_SESSION_TTL_DAYS, pairDevice, validateSession } from '../pairing/sessions';
 import { getRun, listRunReadings } from '../store/readings';
 import { getRecommendationForRun } from '../store/recommendations';
@@ -38,6 +39,12 @@ export interface ApiRequest {
   /** Raw `Authorization` header value, if any. */
   authorization?: string | null;
   body?: unknown;
+  /**
+   * Client network address as reported by the transport's socket (never a
+   * forwarded header). Keys pairing rate limiting; absent = one shared
+   * "unknown" counter.
+   */
+  clientAddress?: string | null;
 }
 
 export type ApiResponseBody =
@@ -54,6 +61,8 @@ export type ApiResponseBody =
 export interface ApiResponse {
   status: number;
   body: ApiResponseBody;
+  /** Set on PAIRING_RATE_LIMITED; the HTTP transport sends it as `Retry-After`. */
+  retryAfterSeconds?: number;
 }
 
 export interface LocalApiOptions {
@@ -69,6 +78,7 @@ const ERROR_STATUS: Record<ApiErrorCode, number> = {
   SESSION_REVOKED: 401,
   NO_PAIRING_PROVISIONED: 503,
   INVALID_PAIRING_CODE: 401,
+  PAIRING_RATE_LIMITED: 429,
   NOT_FOUND: 404,
   NO_ACTIVE_FIELD: 404,
   BAD_REQUEST: 400,
@@ -86,6 +96,7 @@ const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
   NO_PAIRING_PROVISIONED:
     'No pairing code is set up on this gateway. On the laptop, run "npm run pairing:provision".',
   INVALID_PAIRING_CODE: 'That pairing code is not correct. Check the code on the gateway laptop.',
+  PAIRING_RATE_LIMITED: 'Too many incorrect pairing attempts from this device. Wait, then try again.',
   NOT_FOUND: 'Not found for the robot paired with this device.',
   NO_ACTIVE_FIELD: 'No field has been set up for this robot on the gateway yet.',
   BAD_REQUEST: 'The request was not valid.',
@@ -151,16 +162,39 @@ export function createLocalApi(options: LocalApiOptions) {
   const { db } = options;
   const clock = options.clock ?? systemClock;
   const ttlDays = options.sessionTtlDays ?? DEFAULT_SESSION_TTL_DAYS;
+  // In memory, per API instance (one per gateway process): resets on restart (D30).
+  const pairingLimiter = new PairingAttemptLimiter();
 
+  /**
+   * Synchronous end to end, so the limit check and the failure record cannot
+   * interleave with another request. A limited client is refused before its
+   * body is examined or any code is verified, so the 429 says nothing about
+   * whether a code would have been correct. Only a verified wrong code counts
+   * as a failure: malformed bodies and "no pairing provisioned" test no code.
+   */
   function handlePairing(req: ApiRequest): ApiResponse {
     if (req.method !== 'POST') {
       return fail('METHOD_NOT_ALLOWED');
     }
+    const now = clock();
+    const limit = pairingLimiter.check(req.clientAddress, now);
+    if (!limit.allowed) {
+      const retryAfterSeconds = Math.max(1, Math.ceil(limit.retryAfterMs / 1000));
+      const minutes = Math.ceil(retryAfterSeconds / 60);
+      return {
+        ...fail(
+          'PAIRING_RATE_LIMITED',
+          `Too many incorrect pairing attempts from this device. Wait about ${minutes} minute${minutes === 1 ? '' : 's'}, then try again.`,
+        ),
+        retryAfterSeconds,
+      };
+    }
     if (!isRecord(req.body) || typeof req.body.pairingCode !== 'string' || req.body.pairingCode.length > 64) {
       return fail('BAD_REQUEST', 'Send {"pairingCode": "<code>"}.');
     }
-    const result = pairDevice(db, req.body.pairingCode, clock(), ttlDays);
+    const result = pairDevice(db, req.body.pairingCode, now, ttlDays);
     if (!result.ok) {
+      if (result.error === 'INVALID_PAIRING_CODE') pairingLimiter.recordFailure(req.clientAddress, now);
       return fail(result.error);
     }
     const robot = robotSummary(db, result.robotId);

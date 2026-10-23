@@ -38,6 +38,8 @@ export type ApiErrorCode =
   /** The gateway has no active pairing credential; the operator must provision one. */
   | 'NO_PAIRING_PROVISIONED'
   | 'INVALID_PAIRING_CODE'
+  /** Too many failed pairing attempts from this client address; retry later (HTTP 429, `Retry-After`). */
+  | 'PAIRING_RATE_LIMITED'
   /** The resource does not exist for the robot claimed by this session. */
   | 'NOT_FOUND'
   | 'NO_ACTIVE_FIELD'

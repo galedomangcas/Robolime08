@@ -1,14 +1,15 @@
 # Local field gateway: storage, pairing, and API contract
 
-Status: **Phase 4, milestone 1**. The durable SQLite store, migrations, local pairing,
+Status: **Phase 4, milestone 2**. The durable SQLite store, migrations, local pairing,
 sessions, the read-only API handler, the sync outbox contract, and demo
 seeding (Phase 2) are implemented and unit tested in `apps/gateway`. Phase 3
 added the protocol layer: `src/protocol/uplink.ts` (validated uplink →
 SQLite → storage ACK, write before ACK) and `src/protocol/bridgeSession.ts`
 (USB serial bytes in/out, half-duplex ACK scheduling), plus the simulator in
 `src/sim/` — see [`protocol.md`](protocol.md). Phase 4 milestone 1 added a
-**loopback-only** HTTP server for the local API (`src/http/`, `npm run serve`).
-**Not built yet:** LAN binding and pairing rate limiting, web-app hosting,
+**loopback-only** HTTP server for the local API (`src/http/`, `npm run serve`);
+milestone 2 added in-memory pairing-attempt rate limiting (D30).
+**Not built yet:** LAN binding (needs separate approval), web-app hosting,
 live updates, the real LoRa byte codec (spec unsigned), the `serialport`
 connection and timers, and the cloud sync worker.
 
@@ -176,11 +177,55 @@ multi-user authentication and does not identify a person.
   that robot.
 - Never log, commit, or paste a pairing code or token. Tests use a fixture
   named `TEST_ONLY_PAIRING_CODE` that no CLI or seed ever provisions.
+- Failed pairing attempts are rate limited per client address (see
+  "Pairing-attempt rate limiting" below).
 - Known limits: plain HTTP on the field LAN (no TLS) means a device on the
-  same Wi-Fi could observe tokens; **pairing-attempt rate limiting is not
-  implemented yet** and is a prerequisite before the API is exposed on the
-  LAN (OPEN_ITEMS #16), which is why the HTTP server is loopback-only for
-  now; anyone with the laptop's disk can read the stored data.
+  same Wi-Fi could observe tokens; the HTTP server is still loopback-only, and
+  exposing the API on the LAN needs a separate approval (D28, D30); anyone
+  with the laptop's disk can read the stored data.
+
+### Pairing-attempt rate limiting (decision D30)
+
+- **Policy:** at most **5 failed pairing attempts per client IP address within
+  any 15 minutes**. A failure counts for exactly 15 minutes after it happened
+  (sliding window). While 5 failures count, every `POST /api/v1/pairing` from
+  that address gets `429 PAIRING_RATE_LIMITED` with a `Retry-After` header
+  (seconds until the oldest counted failure expires) and a message saying
+  roughly how many minutes to wait. One more attempt becomes possible each
+  time a counted failure expires.
+- **What counts:** only a verified wrong code (`INVALID_PAIRING_CODE`).
+  Malformed bodies (`400`), wrong methods (`405`), oversized or non-JSON
+  requests rejected by the HTTP server, and `NO_PAIRING_PROVISIONED` do not
+  test a code and are not counted. Successful pairings are not counted and do
+  not clear earlier failures. Refused (`429`) attempts are not counted either,
+  so hammering a limited address does not extend its wait.
+- **No information leak:** the API handler refuses a limited address before
+  it validates the body or verifies any code, so the `429` is identical for a
+  correct code, a wrong code and a wrongly shaped JSON body, and creates no
+  session. (The HTTP server still reads the body first and answers non-JSON,
+  oversized or unparseable bodies itself with `415`/`413`/`400`, as for any
+  client; none of these tests a code.) Responses and logs never contain
+  pairing codes or tokens; the request log still holds only method, path,
+  status and duration (not the client address).
+- **Client address:** taken from the TCP connection
+  (`socket.remoteAddress`). `X-Forwarded-For`, `Forwarded` and similar
+  headers are **ignored**, because no trusted proxy sits in front of the
+  gateway. IPv4-mapped IPv6 addresses count as the plain IPv4 address. If the
+  transport cannot report an address, such requests share one counter (fails
+  closed).
+- **In memory only:** counters are not stored in SQLite and **reset when the
+  gateway restarts**; restarting therefore also clears an attacker's
+  failures. Expired entries are removed on every pairing attempt, and each
+  address keeps at most 5 timestamps.
+- **Shared addresses:** every client behind one address shares one counter.
+  Today the server is loopback-only, so **all local clients (browser, tests,
+  tools) share `127.0.0.1`**; on a future LAN, devices behind a NAT or a
+  hotspot that rewrites addresses would share one too, and one of them could
+  lock the others out for up to 15 minutes. Conversely, an attacker who can
+  use many addresses on the field Wi-Fi gets 5 attempts per address; the
+  60-bit code and the scrypt cost remain the main protection.
+- **LAN binding remains disabled.** Rate limiting was the documented
+  prerequisite; binding to a LAN interface still needs its own approval.
 
 ## Local API contract (v1)
 
@@ -211,6 +256,7 @@ missing run all return the same `404 NOT_FOUND`.
 | `SESSION_REVOKED` | 401 | Code was re-provisioned: pair with the new code |
 | `NO_PAIRING_PROVISIONED` | 503 | Operator must run `pairing:provision` |
 | `INVALID_PAIRING_CODE` | 401 | Wrong code |
+| `PAIRING_RATE_LIMITED` | 429 | Too many wrong codes from this address; wait (`Retry-After`) |
 | `NOT_FOUND` / `NO_ACTIVE_FIELD` | 404 | Not available for the paired robot |
 | `BAD_REQUEST` / `METHOD_NOT_ALLOWED` | 400 / 405 | Client error (also: `Host` header not accepted) |
 | `PAYLOAD_TOO_LARGE` | 413 | Request body over 16 KiB (HTTP server) |
@@ -231,8 +277,9 @@ does, and stops cleanly on Ctrl+C (HTTP server first, then the database).
 
 - **Loopback only (decision D28).** `0.0.0.0`, `::`, LAN addresses and host
   names are refused with an error — never silently replaced. Phones and
-  tablets on the field Wi-Fi therefore **cannot** reach this server yet; LAN
-  binding needs pairing rate limiting first (OPEN_ITEMS #16).
+  tablets on the field Wi-Fi therefore **cannot** reach this server yet.
+  Pairing rate limiting now exists (D30), but LAN binding still needs its own
+  approval.
 - Only `GET` and `POST` under `/api/v1/`; other methods get `405` (with
   `Allow: GET, POST`) and other paths `404`. No web app or static files are
   served yet, and no CORS headers are sent.

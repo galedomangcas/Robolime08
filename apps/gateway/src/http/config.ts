@@ -5,9 +5,9 @@ import { isIP } from 'node:net';
  *
  * LOOPBACK ONLY. The server binds to 127.0.0.1 by default and accepts only
  * loopback addresses. Wildcard (0.0.0.0, ::) and LAN addresses are refused
- * with an error — never silently replaced — because pairing-attempt rate
- * limiting (OPEN_ITEMS #16) must exist before the API is reachable from the
- * field Wi-Fi. LAN binding is a later milestone (decision D28).
+ * with an error — never silently replaced. Pairing-attempt rate limiting, the
+ * documented prerequisite, now exists (D30), but making the API reachable
+ * from the field Wi-Fi still needs its own approval (decision D28).
  */
 export const DEFAULT_GATEWAY_HOST = '127.0.0.1';
 
@@ -67,7 +67,7 @@ export function parseHost(raw: string): string {
   if (!isLoopbackAddress(host)) {
     throw new GatewayConfigError(
       `GATEWAY_HOST "${host}" is not a loopback address. This build serves loopback only; ` +
-        'LAN binding needs pairing rate limiting first (OPEN_ITEMS #16).',
+        'LAN binding is not enabled and needs separate approval (decision D28).',
     );
   }
   return host;

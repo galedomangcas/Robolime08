@@ -120,7 +120,8 @@ mapping, RLS, type generation).
 | Durable sync outbox (state machine, restart recovery) | Phase 2 — contract implemented and tested; upload worker is Phase 4 |
 | Local pairing (scrypt verifier) and persisted sessions | Phase 2 — implemented and tested, offline |
 | Local API v1 contract + transport-independent handler with robot-scoped auth | Phase 2 — implemented and tested |
-| Local HTTP server for the API (`src/http`, `npm run serve`) | Phase 4 M1 — implemented and tested on **loopback only** (D28); no LAN binding, rate limiting, web hosting or live updates yet |
+| Local HTTP server for the API (`src/http`, `npm run serve`) | Phase 4 M1 — implemented and tested on **loopback only** (D28); no LAN binding, web hosting or live updates yet |
+| Pairing-attempt rate limiting (5 failures per client IP per 15 min, in memory) | Phase 4 M2 — implemented and tested on loopback only (D30); not tested on a LAN or phone |
 | Cloud-mirror schema, RLS, generated types | Phase 2 — tested on a throwaway local PostgreSQL; **not applied to hosted Supabase** |
 | Synthetic demo seed (SQLite + generated cloud SQL with the same IDs) | Phase 2 — implemented and tested |
 | Local/cloud data-source adapters in the app | Not started (Phase 5) |
@@ -131,7 +132,7 @@ mapping, RLS, type generation).
 | Half-duplex downlink scheduler | Phase 3 — implemented and tested; window timing unconfirmed |
 | Manual-command contract, tracker, robot reference model | Phase 3 — specified and tested in simulation; **disabled (D21)** |
 | Firmware (robot ESP32, gateway bridge ESP32, Nano) | Not in this repository; nothing built or flashed |
-| LAN binding + pairing rate limiting, web-app hosting, live updates, `serialport` connection, gateway runtime/timers, cloud sync worker | Not started (later Phase 4 milestones) |
+| LAN binding (needs separate approval), web-app hosting, live updates, `serialport` connection, gateway runtime/timers, cloud sync worker | Not started (later Phase 4 milestones) |
 | Online (cloud) pairing / robot-claim flow | Not started — trusted boundary defined (OPEN_ITEMS #14) |
 | Crop recommendation engine | Not started — rule tables exist; needs sourced crop data |
 | CSV exports | Not started |
