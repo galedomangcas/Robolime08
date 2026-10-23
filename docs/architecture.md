@@ -1,9 +1,10 @@
 # RoboLime software architecture
 
-Status: **Phase 2 (local storage, pairing, API contract, cloud-mirror schema)**. This document records the confirmed
+Status: **Phase 3 (USB serial + LoRa protocol contracts, simulator; manual commands specified but disabled)**. This document records the confirmed
 architecture and what actually exists in the repository today. The full
 requirements live in [`CLAUDE.md`](../CLAUDE.md); open questions live in
-[`OPEN_ITEMS.md`](OPEN_ITEMS.md); decisions in [`decisions.md`](decisions.md).
+[`OPEN_ITEMS.md`](OPEN_ITEMS.md); decisions in [`decisions.md`](decisions.md); radio and
+serial contracts in [`protocol.md`](protocol.md).
 
 ## Starting state (recorded 2026-10-23)
 
@@ -35,15 +36,19 @@ Vercel are used only when internet is available.
 Robot (ESP32-WROOM-32 + Arduino Nano + NEO-6M GPS)
   │  writes each reading to onboard flash, keeps it until acknowledged
   ▼
-LoRa radio #1 (on robot)
-  │  plain point-to-point LoRa (NOT LoRaWAN), fixed-layout binary packets
+Ra-02 (SX1278) #1, driven by the robot ESP32 over SPI
+  │  plain point-to-point LoRa (NOT LoRaWAN), fixed-layout binary packets,
+  │  half-duplex; LoRa contract v1 (logical; byte layout not signed off)
   ▼
-LoRa radio #2 (ESP32/LoRa bridge, USB to laptop)
+Ra-02 (SX1278) #2, driven by the gateway ESP32 over SPI
+  │  the gateway ESP32 relays opaque radio payloads
+  │  USB serial contract v1 (COBS + CRC-16 frames)
   ▼
-TypeScript gateway service (laptop; portable to Raspberry Pi)
-  │  1. decode packet
+TypeScript gateway service (laptop; portable to Raspberry Pi; `serialport` in Phase 4)
+  │  1. decode serial frame → LoRa payload → validate
   │  2. durable write to local SQLite  ◄── system of record in the field
-  │  3. ACK to robot (only after step 2 succeeds)
+  │  3. STORAGE_ACK back down the same path (only after step 2 commits),
+  │     inside the robot's post-uplink receive window
   ▼
 Local HTTP API on the field LAN (no internet needed)
   ▼
@@ -64,12 +69,20 @@ persistence.
 
 ### Direction of data
 
-Robot → app only. The apps are **observe-only**: no commands, settings,
-navigation plans, or dosing instructions flow back to the robot. Dose
-calculation, expected post-correction pH, navigation, and field decisions stay
-on the robot.
+The **radio link is bidirectional**: robot → gateway carries readings, status
+packets and (if ever enabled) command reports; gateway → robot carries
+storage ACKs. **The applications remain observe-only** (CLAUDE.md, locked):
+no commands, settings, navigation plans, or dosing instructions flow from the
+app or cloud to the robot. Dose calculation, expected post-correction pH,
+navigation, and field decisions stay on the robot.
 
-## Repository layout (Phase 2)
+A manual-command downlink was requested for Phase 3. It is **specified and
+simulated but disabled** in code (decision D21): every send path requires an
+architecture decision and a hardware safety sign-off that do not exist. See
+[`protocol.md`](protocol.md) §6–7 for the contract and the required robot
+safe behaviour.
+
+## Repository layout (Phase 3)
 
 ```
 Robolime/
@@ -77,12 +90,14 @@ Robolime/
 │   ├── mobile/            Expo + React Native + TypeScript app (Android + web)
 │   └── gateway/           Offline field gateway (Node, TypeScript, node:sqlite)
 │       ├── migrations/    Ordered SQLite migrations (0001_initial.sql)
-│       └── src/           db, store, pairing, api, sync mapping, seed, cli
+│       └── src/           db, store, pairing, api, sync mapping, seed, cli,
+│                          protocol (uplink + bridge session), sim (simulator)
 ├── packages/
 │   └── shared/            Domain contracts, local API v1 contract, pure
-│                          utilities, generated Supabase types (src/generated)
+│                          utilities, protocol contracts (src/protocol),
+│                          generated Supabase types (src/generated)
 ├── supabase/              Cloud-mirror migrations, synthetic seed, RLS tests
-├── docs/                  Architecture, gateway, cloud mirror, open items, decisions
+├── docs/                  Architecture, protocol, gateway, cloud mirror, open items, decisions
 ├── Website/               Pre-existing placeholder page (untouched)
 ├── PCB Schematic/         Pre-existing KiCad files (untouched)
 ├── eslint.config.js       One lint config for all workspaces
@@ -108,8 +123,14 @@ mapping, RLS, type generation).
 | Cloud-mirror schema, RLS, generated types | Phase 2 — tested on a throwaway local PostgreSQL; **not applied to hosted Supabase** |
 | Synthetic demo seed (SQLite + generated cloud SQL with the same IDs) | Phase 2 — implemented and tested |
 | Local/cloud data-source adapters in the app | Not started (Phase 5) |
-| Binary packet decoder and simulator | Not started — blocked on signed-off packet spec (Phase 3) |
-| LoRa/USB receiver, ACK loop, LAN HTTP server, cloud sync worker | Not started (Phase 4) |
+| USB serial contract v1 (COBS + CRC-16 framing, streaming reader) | Phase 3 — implemented and tested in software; **proposed** until bridge firmware + loopback test |
+| LoRa contract v1 (logical messages, validation, size limit, codec boundary) | Phase 3 — implemented and tested; **byte layout not signed off**, so the real codec refuses to decode/encode |
+| Write-before-ACK uplink handling + bridge protocol session | Phase 3 — implemented and tested with the simulator (no serial port, no timers) |
+| Packet/bridge simulator (duplicates, gaps, late/out-of-order, retries, dosing + verification) | Phase 3 — implemented; SIMULATION-ONLY codec |
+| Half-duplex downlink scheduler | Phase 3 — implemented and tested; window timing unconfirmed |
+| Manual-command contract, tracker, robot reference model | Phase 3 — specified and tested in simulation; **disabled (D21)** |
+| Firmware (robot ESP32, gateway bridge ESP32, Nano) | Not in this repository; nothing built or flashed |
+| `serialport` connection, timers, LAN HTTP server, cloud sync worker | Not started (Phase 4) |
 | Online (cloud) pairing / robot-claim flow | Not started — trusted boundary defined (OPEN_ITEMS #14) |
 | Crop recommendation engine | Not started — rule tables exist; needs sourced crop data |
 | CSV exports | Not started |

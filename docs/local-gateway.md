@@ -1,10 +1,14 @@
 # Local field gateway: storage, pairing, and API contract
 
-Status: **Phase 2**. The durable SQLite store, migrations, local pairing,
+Status: **Phase 3**. The durable SQLite store, migrations, local pairing,
 sessions, the read-only API handler, the sync outbox contract, and demo
-seeding are implemented and unit tested in `apps/gateway`. **Not built yet:**
-the LoRa/USB receiver and packet decoder (Phase 3), the LAN HTTP server, ACK
-loop, and cloud sync worker (Phase 4).
+seeding (Phase 2) are implemented and unit tested in `apps/gateway`. Phase 3
+added the protocol layer: `src/protocol/uplink.ts` (validated uplink →
+SQLite → storage ACK, write before ACK) and `src/protocol/bridgeSession.ts`
+(USB serial bytes in/out, half-duplex ACK scheduling), plus the simulator in
+`src/sim/` — see [`protocol.md`](protocol.md). **Not built yet:** the real
+LoRa byte codec (spec unsigned), the `serialport` connection and timers, the
+LAN HTTP server, and the cloud sync worker (Phase 4).
 
 Everything in this document works with **no internet** and no Supabase.
 
@@ -122,6 +126,9 @@ assumed. Status reports (never retried by the robot) are keyed by
 key is treated as a duplicate and ignored, even if other values differ
 (acceptable while status packets are not retried; revisit with the packet spec). All three outcomes are durable when the call returns; whether a
 `conflict` should be ACKed is decided with the firmware owner (OPEN_ITEMS #15).
+Phase 3 maps them to `STORAGE_ACK` results `STORED` / `DUPLICATE` /
+`CONFLICT_RECORDED` (and `REJECTED` for a run-type mismatch; no reply for an
+unknown robot or a failed write) — see [`protocol.md`](protocol.md) §4.
 The gateway never computes dose volume or expected post-correction pH.
 
 ## Sync outbox contract (local → cloud, one way)

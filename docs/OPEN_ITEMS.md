@@ -6,7 +6,7 @@ guessing.** Update the status column with who confirmed what and when.
 
 | # | Item | Owner | Blocks | How the code handles it now | Status |
 |---|---|---|---|---|---|
-| 1 | **Signed-off byte-level LoRa packet specification** (reading record and status packet: field order, offsets, widths, endianness, scaling, timestamp encoding, flag bits, ACK format, robot/run identifier formats) | Firmware | Packet decoder, simulator, gateway ingest | Domain types and the gateway's `DecodedReading`/`DecodedStatus` describe decoded values only; no byte offsets exist in the code. Robot and run identifiers are stored as opaque text (≤ 64 chars) | Open |
+| 1 | **Signed-off byte-level LoRa packet specification** (reading record and status packet: field order, offsets, widths, endianness, scaling, timestamp encoding, flag bits, ACK format, robot/run identifier formats) | Firmware | Packet decoder, simulator, gateway ingest | Phase 3: the **logical** LoRa v1 contract (kinds, fields, validation, 255-byte limit) is implemented in `packages/shared/src/protocol/lora.ts`; the byte layout plugs in behind `LoRaPayloadCodec`. `UNSIGNED_LORA_CODEC` refuses to decode or encode, so **no real packet can be processed yet**. No byte offsets exist in the code. Identifiers remain opaque text (≤ 64 chars) | Open |
 | 2 | **Lime tank capacity** (≤ 5,000 mL; exact value undecided) | Hardware | Any display relating dispensed volume to capacity; `LIME_EMPTY` interpretation | `robots.tank_capacity_ml` is NULL by default with a CHECK of `0 < x ≤ 5000` (SQLite and cloud). `LIME_EMPTY` is taken from the robot's error flag, not computed. No remaining-lime gauge is shown (by requirement) | Open |
 | 3 | **Stale-data threshold** (currently 240 s) must be re-checked against the measured time per cell | Research + hardware | Stale labels | `STALE_THRESHOLD_SECONDS = 240` in `packages/shared/src/config.ts`, marked provisional | Open |
 | 4 | **"Near target" pH band boundary** for the dashboard map (target pH 6.0 is confirmed) | Research | Map colouring | Not implemented yet; will be a central configuration value | Open |
@@ -20,9 +20,17 @@ guessing.** Update the status column with who confirmed what and when.
 | 12 | **Reference documents** `4108_DP1 Manuscript.md` and `Pasted text(2).txt` are not in the repository | Team | Cross-checking terminology against the manuscript | Work proceeds from `CLAUDE.md` | Open |
 | 13 | **Real field survey data**: field name/area, cell count, grid layout, cell centres (if any), and the field key used on the robot profile | Research + hardware | Provisioning the real field; dashboard map | Schema supports it (`fields`, `field_cells`, nullable geometry); only the synthetic demo field exists; no field-provisioning CLI yet | Open (Phase 2) |
 | 14 | **Online (cloud) pairing / robot-claim flow**: how an online client proves possession and receives a `robot_claims` row; whether anonymous sign-in is enabled on the hosted project | Team | Vercel/online data access | Claims are writable only by a trusted service-role process; no client path exists. Local `supabase/config.toml` keeps anonymous sign-ins disabled. Offline pairing is unaffected | Open (Phase 2) |
-| 15 | **ACK policy for duplicate and conflicting readings**, and whether the attempt count starts at 0 or 1 | Firmware | Phase 3/4 ACK loop; first-attempt delivery ratio | Duplicates and conflicts are durably recorded (`reading_receipts`); the original reading is never overwritten. `attempt_count ≥ 0` is accepted until the base is confirmed | Open (Phase 2) |
+| 15 | **ACK policy for duplicate and conflicting readings**, and whether the attempt count starts at 0 or 1 | Firmware | Phase 3/4 ACK loop; first-attempt delivery ratio | Duplicates and conflicts are durably recorded (`reading_receipts`); the original reading is never overwritten. `attempt_count ≥ 0` is accepted until the base is confirmed. Phase 3 **proposes** (D25): ACK `STORED`/`DUPLICATE`/`CONFLICT_RECORDED` after commit; `REJECTED` for run-type mismatch; silence for unknown robots and storage failures | Proposed (Phase 3) |
 | 16 | **Local session lifetime and pairing-attempt rate limit** | Team | Security posture of the field LAN | Proposed default session TTL 90 days (`DEFAULT_SESSION_TTL_DAYS`); rate limiting to be added with the HTTP server (Phase 4) | Proposed (Phase 2) |
 | 17 | **Validate the cloud schema on the official Supabase stack** (Docker) and decide when to apply it to the hosted project | Team | Cloud sync (Phase 4) | Migration + RLS tests pass on a throwaway plain PostgreSQL 17 with a test-only auth shim; **not applied to hosted Supabase**; Docker Desktop was not running | Open (Phase 2) |
+| 18 | **LoRa radio settings**: frequency (Philippine NTC-compliant), spreading factor, bandwidth, coding rate, sync word, preamble, TX power, over-air CRC, header mode; resulting airtime and usable payload budget | Firmware + hardware | Real radio link, payload budget, retry timing | Not chosen anywhere in code. Only the SX1278 FIFO maximum (255 bytes) is enforced | Open (Phase 3) |
+| 19 | **Gateway bridge firmware + USB details**: gateway ESP32 board/module, USB-UART chip/driver, baud rate, flow control, reset-on-open behaviour; bridge firmware implementing USB serial v1; hardware loopback test | Firmware (software team for the contract) | Phase 4 `serialport` connection | USB serial v1 framing implemented and tested in software only (`docs/protocol.md` §2). No firmware exists in the repository; `serialport` not yet added | Open (Phase 3) |
+| 20 | **Timing**: robot post-uplink receive-window delay/length (must cover SQLite commit + USB round trip), reading retry interval/back-off, bridge TX-result timeout, command ACK timeout / max transmissions / execution-report timeout, link-loss (dead-man) timeout | Firmware + team (measure on hardware) | ACK delivery, any manual command | `RADIO_SCHEDULE = null`, `COMMAND_TIMING = null`; tests use values marked TEST-ONLY | Open (Phase 3) |
+| 21 | **Approval of manual commands** (D21): the locked observe-only rule must be amended by an explicit team decision, and the manuscript updated, before any command path is enabled | Team | Manual-command flow (Phase 5) | Specified and simulated; every send path blocked by `MANUAL_COMMAND_APPROVAL` | Open (Phase 3) |
+| 22 | **Actuator specifications and limits**: drive motor interface/specs, maximum manual drive duration, maximum command TTL, which faults block motion; pump limits (no pump command is defined) | Hardware | Manual commands | `MANUAL_COMMAND_LIMITS` all `null` → `LIMIT_UNCONFIRMED`. Motion-blocking fault list is proposed only | Open (Phase 3) |
+| 23 | **Emergency stop hardware**: whether a physical E-stop exists, what it de-energises, wiring, and test procedure. Radio STOP is not an E-stop | Hardware | Any physical actuation from manual commands | Not modelled beyond a `localStop()` in the reference robot model | Open (Phase 3) |
+| 24 | **Radio STOP during an autonomous run**: should a radio STOP be honoured outside manual mode? Honouring it is app-initiated run control (out of scope today); refusing it means only on-robot stops apply | Team + hardware | Robot safety rules R1–R2 | Reference model refuses all commands outside `MANUAL` (`NOT_IN_MANUAL_MODE`) | Open (Phase 3) |
+| 25 | **Robot schematic review**: GPIO/SPI nets between the robot ESP32, Ra-02 and Nano in `PCB Schematic/` | Hardware | Firmware, documentation | Not reviewed; no pin assignments in software or docs | Open (Phase 3) |
 
 ## Housekeeping (not blocking, deliberately untouched in Phases 1–2)
 
@@ -62,6 +70,18 @@ deployment or Android release build; adopt the fix as soon as patched
 
 ## Manuscript reconciliation
 
-None identified yet in Phase 1. Record here any place where the software
-departs from the manuscript (e.g. the offline-first gateway replacing direct
-Supabase reads in the field).
+Record here any place where the software departs from the manuscript or the
+master prompt.
+
+- **Phase 3 brief vs CLAUDE.md:** the brief describes a bidirectional
+  manual-command flow and a later Manual Control UI; CLAUDE.md §3 forbids
+  app-to-robot downlink and app-initiated run control. Implemented as
+  "specified but disabled" (D21, item #21). If the team approves manual
+  control, CLAUDE.md §3–§4 and the manuscript's system description must be
+  updated together.
+- **Bidirectional radio:** the radio link carries storage ACKs back to the
+  robot (already implied by "acknowledgement to robot" in CLAUDE.md). The
+  manuscript should describe the link as two-way for acknowledgements, while
+  the applications stay observe-only.
+- **Gateway hardware:** the gateway is an ESP32 + Ra-02 bridge connected to
+  the laptop by USB serial; the laptop does not drive the radio directly.

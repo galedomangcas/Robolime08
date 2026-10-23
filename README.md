@@ -8,12 +8,16 @@ This repository holds the software (mobile app, web app, shared domain code,
 the offline-first laptop gateway, and the Supabase cloud-mirror schema)
 alongside the team's hardware files.
 
-> **Status: Phase 2.** The app shows a landing screen with honest "no data"
+> **Status: Phase 3.** The app shows a landing screen with honest "no data"
 > states. The offline gateway's SQLite store, local pairing, API contract and
 > sync-state model are implemented and tested, and the Supabase cloud-mirror
-> schema is tested locally. The radio receiver, HTTP server, cloud upload,
-> app screens, crop scoring and CSV exports are **not implemented yet**, and
-> nothing has been applied to hosted Supabase.
+> schema is tested locally. Phase 3 added the USB serial and LoRa protocol
+> contracts, write-before-ACK ingest and a packet simulator — tested in
+> software only; the LoRa byte layout is not signed off, no firmware is in
+> this repository, and **manual commands are specified but disabled**. The
+> serial-port connection, HTTP server, cloud upload, app screens, crop scoring
+> and CSV exports are **not implemented yet**, and nothing has been applied to
+> hosted Supabase.
 > See [`docs/architecture.md`](docs/architecture.md).
 
 ## Team setup note
@@ -27,10 +31,10 @@ Eto yung tutorial vid >>  https://www.youtube.com/watch?v=V7WpadAi3RI
 | Path | What it is |
 |---|---|
 | `apps/mobile/` | Expo + React Native + TypeScript app (Android and web from one codebase) |
-| `apps/gateway/` | Offline field gateway: SQLite store, migrations, local pairing, read-only API handler, sync outbox ([guide](docs/local-gateway.md)) |
-| `packages/shared/` | Shared domain types, local API v1 contract, pure tested utilities, generated Supabase types |
+| `apps/gateway/` | Offline field gateway: SQLite store, migrations, local pairing, read-only API handler, sync outbox, protocol session and simulator ([guide](docs/local-gateway.md)) |
+| `packages/shared/` | Shared domain types, local API v1 contract, USB serial + LoRa protocol contracts ([protocol](docs/protocol.md)), pure tested utilities, generated Supabase types |
 | `supabase/` | Cloud-mirror migrations, RLS, synthetic seed and local tests ([guide](docs/cloud-mirror.md)) |
-| `docs/` | [Architecture](docs/architecture.md), [local gateway](docs/local-gateway.md), [cloud mirror](docs/cloud-mirror.md), [open items](docs/OPEN_ITEMS.md), [decisions](docs/decisions.md) |
+| `docs/` | [Architecture](docs/architecture.md), [protocol](docs/protocol.md), [local gateway](docs/local-gateway.md), [cloud mirror](docs/cloud-mirror.md), [open items](docs/OPEN_ITEMS.md), [decisions](docs/decisions.md) |
 | `CLAUDE.md` | Software master prompt / requirements |
 | `Website/` | Earlier placeholder web page (kept as-is; superseded by the Expo web build) |
 | `PCB Schematic/` | KiCad PCB project |

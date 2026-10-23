@@ -170,3 +170,74 @@ OPEN_ITEMS #17.
 `"type": "module"` was added so the Node gateway (ESM, run by `tsx`) can
 import the shared TypeScript source. Metro, Jest and the web export were
 re-verified after the change.
+
+## D21 — Manual commands: specified and simulated, but disabled (Phase 3)
+
+**Conflict.** CLAUDE.md (locked) makes the apps observe-only and lists
+"app-initiated run control" and "app-to-robot downlink" as out of scope. The
+Phase 3 brief asked for a bidirectional manual-command flow.
+
+**Options presented to the team:** (1) lift observe-only for manual mode and
+build it; (2) telemetry + storage ACK only, manual commands as a written
+proposal; (3) **specify the command contract and safety rules in code and
+tests, but block every send path**; (4) supply a newer master prompt first.
+
+**Chosen (team, 2026-10-23):** option 3.
+
+**Consequences**
+- `MANUAL_COMMAND_APPROVAL` is frozen `{ approved: false }`. Enabling needs
+  `approved: true` **and** an architecture-decision reference **and** a
+  hardware safety sign-off reference; `encodeLoRaMessage` and
+  `CommandTracker.submit` check all three. Tests use a TEST-ONLY approval
+  defined inside test files.
+- Limits and timing are `null` (unconfirmed); dependent commands are rejected.
+- No gateway session path, API route or UI sends a command. CLAUDE.md is
+  **not** changed: observe-only remains the approved architecture.
+- No pump/dispense command is defined (it would be an app dosing instruction).
+- To lift: record a new decision here that amends CLAUDE.md §3, obtain the
+  hardware owner's safety sign-off (E-stop, limits, bench test), confirm
+  OPEN_ITEMS #20–#24, and update the manuscript.
+
+## D22 — USB serial framing: COBS + CRC-16/CCITT-FALSE, little-endian (Phase 3)
+
+**Options:** (1) newline-delimited text/JSON (easy to debug, but escaping,
+size and parsing cost on the ESP32, and binary radio payloads need encoding);
+(2) SLIP; (3) **COBS with a 0x00 delimiter, fixed 6-byte header and CRC-16**.
+**Chosen:** (3) — constant, small overhead (≤ 1 byte per 254), binary
+payloads pass through untouched, resynchronisation at any 0x00, cheap on an
+ESP32. The version byte (offset 0) and CRC trailer are frozen across
+versions so mismatches are always detectable. This contract is software-owned
+and proposed until the bridge firmware implements it (OPEN_ITEMS #19).
+
+## D23 — LoRa contract is logical; the byte layout sits behind a codec (Phase 3)
+
+The radio message set, fields, identifiers, validation and size limits are
+defined now; field offsets/encodings are not invented. `LoRaPayloadCodec` is
+the single place a layout may live. `UNSIGNED_LORA_CODEC` refuses both
+directions until the firmware spec is signed off; the simulator's codec is
+marked `isWireFormat: false` and uses a "SIM" magic so it cannot be mistaken
+for real packets.
+
+## D24 — Robot-initiated half-duplex scheduling (Phase 3)
+
+The gateway transmits only in a response window that the robot opens after
+each uplink, one frame at a time, STOP > storage ACK > other commands. This
+avoids collisions on a half-duplex SX1278 pair without clock sync. Window
+timing is unconfirmed (OPEN_ITEMS #20).
+
+## D25 — Storage ACK semantics (Phase 3, proposed to firmware)
+
+`STORED`, `DUPLICATE`, `CONFLICT_RECORDED` are sent only after the SQLite
+commit and mean "durably recorded". `REJECTED` (run-type mismatch) means
+"not stored, keep it". Unknown robots get no reply; storage failures get no
+reply. Status packets are not acknowledged. Whether `CONFLICT_RECORDED`
+releases flash stays OPEN_ITEMS #15.
+
+## D26 — Command expiry by remaining TTL and a monotonic sequence (Phase 3)
+
+Because the robot clock source is unconfirmed (OPEN_ITEMS #8), commands carry
+`ttlRemainingMs` recomputed on each retransmission plus a strictly increasing
+`commandSeq`. The robot rejects expired and lower-sequence commands and
+answers equal sequences as duplicates. Gateway outcomes distinguish
+"never sent" (`EXPIRED_UNSENT`) from "sent but unconfirmed" (`UNCONFIRMED`):
+the latter never claims the robot did or did not act.
