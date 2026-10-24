@@ -44,7 +44,7 @@ Ra-02 (SX1278) #2, driven by the gateway ESP32 over SPI
   │  the gateway ESP32 relays opaque radio payloads
   │  USB serial contract v1 (COBS + CRC-16 frames)
   ▼
-TypeScript gateway service (laptop; portable to Raspberry Pi; `serialport` in Phase 4)
+TypeScript gateway service (laptop; portable to Raspberry Pi; `serialport` adapter: build-order item 8, D34)
   │  1. decode serial frame → LoRa payload → validate
   │  2. durable write to local SQLite  ◄── system of record in the field
   │  3. STORAGE_ACK back down the same path (only after step 2 commits),
@@ -121,7 +121,7 @@ mapping, RLS, type generation).
 | Durable sync outbox (state machine, restart recovery) | Phase 2 — contract implemented and tested; upload worker is Phase 4 |
 | Local pairing (scrypt verifier) and persisted sessions | Phase 2 — implemented and tested, offline |
 | Local API v1 contract + transport-independent handler with robot-scoped auth | Phase 2 — implemented and tested |
-| Local HTTP server for the API (`src/http`, `npm run serve`) | Phase 4 M1 — implemented and tested on **loopback only** (D28); no LAN binding, web hosting or live updates yet |
+| Local HTTP server for the API (`src/http`, `npm run serve`) | Phase 4 M1 — implemented and tested on **loopback only** (D28); M1 itself had no LAN binding, web hosting or live updates. Opt-in web-app hosting on loopback was added later by M5a (D33); LAN binding is still disabled and not implemented |
 | Pairing-attempt rate limiting (5 failures per client IP per 15 min, in memory) | Phase 4 M2 — implemented and tested on loopback only (D30); not tested on a LAN or phone |
 | Cloud-mirror schema, RLS, generated types | Phase 2 — tested on a throwaway local PostgreSQL; **not applied to hosted Supabase** |
 | Synthetic demo seed (SQLite + generated cloud SQL with the same IDs) | Phase 2 — implemented and tested |
@@ -134,11 +134,57 @@ mapping, RLS, type generation).
 | Half-duplex downlink scheduler | Phase 3 — implemented and tested; window timing unconfirmed |
 | Manual-command contract, tracker, robot reference model | Phase 3 — specified and tested in simulation; **disabled (D21)** |
 | Firmware (robot ESP32, gateway bridge ESP32, Nano) | Not in this repository; nothing built or flashed |
-| LAN binding (needs separate approval), web-app hosting, live updates, `serialport` adapter for the bridge runtime, cloud sync worker | Not started (later Phase 4 milestones) |
+| LAN binding for the HTTP server (opt-in; prohibited until a new decision authorises it: D28 sets the loopback-only policy and the rate-limit prerequisite, D30 records LAN binding as unauthorised) | Not implemented — required for Phase 4 exit (D34); loopback-only today |
+| Cloud sync worker (retrying, resumable, idempotent upload from the outbox) | Not implemented — required for Phase 4 exit (D34); only the outbox contract exists |
+| `serialport` adapter for the bridge runtime and physical hardware integration | Not implemented — moved to build-order item 8 (D34); blocked on firmware/hardware sign-offs (OPEN_ITEMS #1, #8, #15, #18, #19, #20, #26, #31, #33) |
+| Push-based live updates (server-sent events, WebSockets) | Not planned for Phase 4 — the 10 s status polling satisfies status refresh (D34); filling map cells as records arrive is dashboard work (build-order item 5) |
 | Online (cloud) pairing / robot-claim flow | Not started — trusted boundary defined (OPEN_ITEMS #14) |
 | Crop recommendation engine | Not started — rule tables exist; needs sourced crop data |
 | Research CSV exports (`src/exports`, `npm run export:csv`: readings, paired dosing/verification, delivery) | M4 — implemented and tested offline from local SQLite, read-only (D32); first-attempt delivery ratio not computed (OPEN_ITEMS #15); EC unit unconfirmed (#7); no HTTP route or app UI yet |
 | Vercel deployment | Not changed — see "Vercel" below |
+
+## Phase 4 exit checklist (PROPOSED, D34)
+
+Scope rulings A–C are decided in D34. The criteria, statuses and closing
+rule below are **PROPOSED** and need the project lead's approval. Sources:
+`CLAUDE.md` §12 item 4 (the Phase 4 definition), §3, §6, §7 and §10.
+
+Status key: **Verified** = implemented and verified by automated or local
+integration tests; **Partly verified** = implemented but not adequately
+verified; **Not implemented**; **Blocked** = waiting on a prerequisite or
+approval; **Deferred** = assigned to another build-order item by D34.
+
+| # | Criterion | Source | Status | Evidence / what is still needed |
+|---|---|---|---|---|
+| 1 | SQLite is the durable source of truth (WAL, `synchronous=FULL`, migrations, purpose guard) | §3, §7; item 4 | Verified | Gateway store and migration tests |
+| 2 | Write-before-ACK ordering | §6; item 4 | Verified in simulation; wire-level proof **Deferred** to item 8 | `bridgeSession.ts` + simulator tests; real serial/LoRa proof needs the item 8 adapter |
+| 3 | Offline gateway operation, including research CSV exports | §3, §9; item 4 | Verified on loopback | M1–M4 tests; no LAN or field run |
+| 4 | Loopback HTTP API and its security boundary (Host check, JSON-only POST, body/time limits, rate limit, robot-scoped sessions) | §3, §7; D28, D30 | Verified on loopback | `src/http` and pairing tests |
+| 5 | **LAN HTTP API** (opt-in binding, private-interface policy, existing Host/rate-limit checks on the LAN) | item 4; §3 | **Not implemented / Blocked** until a new decision authorises LAN binding (D28 loopback-only policy; D30 unauthorised) | Implementation plus automated tests; the physical phone/LAN test is item 8 (#6) |
+| 6 | **Retrying, resumable, idempotent cloud sync**, one-way, with pending/syncing/synced/failed states | item 4; §6, §7 | **Not implemented** | The outbox contract alone does not satisfy this; the worker and its tests are required |
+| 7 | Recovery after interrupted writes, gateway restart, partial upload and network loss; records end up in the cloud exactly once | §10 ("internet loss … exactly once"); §7 ("replayed cloud sync, gateway restart, disk/write failure, and partial upload") | Local outbox recovery Verified (`recoverInterrupted`); local write failure Verified: a failed SQLite write sends no ACK (`bridgeSession.test.ts`, `bridgeRuntime.test.ts`); cloud-side recovery **Not implemented** and not verified | Worker recovery tests against a local PostgreSQL/Supabase target |
+| 8 | Duplicates ignored, parents before children, cloud confirmation required before `synced` | §6, §7 | Local contract Verified (`claimBatch` order, `markSynced` + database trigger, idempotent ingest); end-to-end **Not implemented** | Worker tests: replay, out-of-order parents, conflicting duplicates stay `failed` |
+| 9 | Replaying a batch twice creates no duplicates | §10 | Local batch replay Verified (gateway store and simulator tests); cloud side only a **single-row** `insert … on conflict do nothing` replay check in `rls_robot_scope.test.sql`, which does not prove batch replay through a worker; worker-level **Not implemented** | Batch replay through the worker |
+| 10 | Safety gates and simulation/field separation unchanged (`MANUAL_COMMANDS_APPROVED = false`, `RADIO_SCHEDULE = null`, loopback default, no CORS, demo-only simulation, no secrets) | §3; D17, D21, D28, D31 | Verified | Code and tests; must still hold at exit |
+| 11 | Status refresh: 10 s non-overlapping polling with ages, stale and unavailable states | §5; D33, D34-B | Verified (tests + headless Edge on loopback) | Push updates not in Phase 4 |
+| 12 | Serial/LoRa adapter and hardware integration | §3, §6; item 8 | **Deferred** to item 8 and **Blocked** (OPEN_ITEMS #1, #8, #15, #18, #19, #20, #26, #31, #33) | Firmware/hardware sign-offs first |
+| 13 | Field workflow with WAN disconnected, Android app on the LAN, physical network (#6) | §10 ("Test the complete field workflow …"); item 8 | **Deferred** to item 8 — not verified | Physical test |
+| 14 | All screens on Android and web under the §10 conditions; outdoor readability | §10; items 8–9 | **Deferred** — not verified | Devices and outdoor test |
+| 15 | Hosted Supabase validation and "later cloud synchronization" tests; Vercel build | §10; items 8–9 (Vercel: item 9); OPEN_ITEMS #14, #17 | **Blocked** on approval / **Deferred** to items 8–9 (Vercel: item 9) | Docker and hosted access approvals |
+
+**Proposed closing rule:** Phase 4 software closes only when rows 1–11 are
+Verified at the level each row states, and rows 12–15 stay recorded as
+Deferred or Blocked with their sources. This requires:
+- row 5: the LAN HTTP API implemented and verified by automated tests (after
+  a new decision authorises LAN binding);
+- rows 6–9: the retrying cloud sync worker implemented, with its end-to-end
+  local tests (recovery, replay, ordering, confirmation before `synced`)
+  passing; the existing local outbox and single-row SQL evidence is not
+  enough on its own;
+- row 2: verified in simulation; its wire-level proof stays Deferred to
+  item 8 and does not block Phase 4.
+
+Closing Phase 4 would not imply LAN, field, hosted or hardware readiness.
 
 ## Timestamps
 
@@ -185,7 +231,9 @@ described as the RoboLime app.
 
 ## Local (laptop) web hosting
 
-The same `apps/mobile/dist` output will be served from the laptop to phones
-on the field Wi-Fi. In a later phase the gateway (or a local static server)
-will serve it on the LAN interface only. For a quick local preview now:
-`npx expo serve` from `apps/mobile` after `npm run build:web`.
+The gateway already serves the `apps/mobile/dist` export, opt-in with
+`--web-dir` or `GATEWAY_WEB_DIR`, on its **loopback** address only (M5a, D33;
+see `local-gateway.md`). Serving it to phones on the field Wi-Fi needs the
+LAN binding, which is not implemented and is prohibited until a new decision
+authorises it (D28 loopback-only policy; D30 records it as unauthorised; D34). `npx expo serve` from `apps/mobile` previews the screens but cannot
+reach the API, because the web app only calls its own origin.

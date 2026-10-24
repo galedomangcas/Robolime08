@@ -1,6 +1,7 @@
 # Local field gateway: storage, pairing, and API contract
 
-Status: **Phase 4, milestone 3**. The durable SQLite store, migrations, local pairing,
+Status: **Phase 4 — milestones M1–M4 and M5a implemented** (Phase 4 itself is
+not complete; see the exit checklist in `architecture.md` and D34). The durable SQLite store, migrations, local pairing,
 sessions, the read-only API handler, the sync outbox contract, and demo
 seeding (Phase 2) are implemented and unit tested in `apps/gateway`. Phase 3
 added the protocol layer: `src/protocol/uplink.ts` (validated uplink →
@@ -11,10 +12,15 @@ SQLite → storage ACK, write before ACK) and `src/protocol/bridgeSession.ts`
 milestone 2 added in-memory pairing-attempt rate limiting (D30); milestone 3
 added an opt-in **bridge runtime** (`src/runtime/`) that runs the protocol
 session over a byte-transport interface, verified with a simulated bridge only
-(D31).
-**Not built yet:** LAN binding (needs separate approval), web-app hosting,
-live updates, the real LoRa byte codec (spec unsigned), a `serialport`
-adapter for the runtime, and the cloud sync worker.
+(D31). M4 added offline research CSV exports (D32), and M5a added opt-in
+serving of the web app (pairing and status screens) on the same **loopback**
+address (`--web-dir`, D33).
+**Not built yet:** LAN binding (required for Phase 4; prohibited until a new
+decision authorises it: D28 loopback-only policy, D30 records it as
+unauthorised) and the cloud sync worker (required for Phase 4); the real LoRa byte
+codec (spec unsigned) and a `serialport` adapter for the runtime (moved to
+build-order item 8, D34). Push-based live updates are not planned for
+Phase 4: status refresh uses the app's 10 s polling (D34).
 
 Everything in this document works with **no internet** and no Supabase.
 

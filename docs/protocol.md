@@ -173,7 +173,7 @@ false`), which exercises every other layer without inventing offsets.
 `BridgeProtocolSession` — the only producer of bytes for the serial port —
 requires an explicit `link` option with no default; `link: 'hardware'`
 calls `assertHardwareCodec` in the constructor, so a simulation codec is
-refused before any byte can reach a port. The Phase 4 serial adapter must
+refused before any byte can reach a port. The serial adapter (build-order item 8, D34) must
 construct the session with `link: 'hardware'` (that adapter does not exist
 yet). The simulation codec also refuses to register a `MANUAL_COMMAND`, so
 it is no way around the gate.
@@ -348,6 +348,7 @@ firmware and drives no hardware.
 | `apps/gateway/src/protocol/bridgeSession.ts` | Serial bytes in → store/ACK → serial bytes out; no port, no timers |
 | `apps/gateway/src/sim/` | SIMULATION-ONLY codec, synthetic run/bridge simulator, robot reference model |
 
-Not in Phase 3: the `serialport` connection, timers, persisted command
-sequence, LAN HTTP server and cloud worker (Phase 4); any Manual Control UI
+Not in Phase 3: the `serialport` connection (build-order item 8, D34),
+timers, persisted command sequence, LAN HTTP server and cloud worker
+(Phase 4); any Manual Control UI
 (Phase 5, and only if D21 is lifted); firmware.

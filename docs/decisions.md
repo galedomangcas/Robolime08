@@ -584,3 +584,60 @@ and the realpath containment check is a second guard.
 devices, outdoor readability, any hardware. Browser checks were headless
 Edge on loopback with synthetic data only. Timings are provisional
 (OPEN_ITEMS #3).
+
+## D34 — Phase 4 scope reconciliation and exit evidence
+
+**Context:** the read-only Phase 4 closure audit (2026-10-24) found no
+written acceptance criteria for Phase 4. The only authoritative definition is
+`CLAUDE.md` §12 item 4: "TypeScript laptop gateway with SQLite durability, LAN
+HTTP API, ACK ordering, offline operation, and retrying cloud sync". Project
+documents had also listed the `serialport` adapter and "live updates" as
+later Phase 4 milestones, which item 4 does not name.
+
+**Rulings (decided by the project lead, 2026-10-24).** These are scope
+classifications only; none of them claims that any work is complete.
+
+- **A. Serial/LoRa hardware integration moves to build-order item 8**
+  ("… hardware integration, and failure testing"). The `serialport` adapter,
+  wire-level ACK proof and all physical bridge work leave the Phase 4 exit
+  gate. Every prerequisite stays open and unresolved: signed-off byte layout
+  (OPEN_ITEMS #1), radio settings (#18), bridge firmware and USB details
+  (#19), timing (#20), on-air version field (#26), ACK format and routing
+  (#31), ACK policy and attempt-count base (#15), 3-second feasibility
+  evidence (#33), and robot clock source (#8). `RADIO_SCHEDULE` stays `null`,
+  `MANUAL_COMMANDS_APPROVED` stays `false`, the hardware-runtime refusal
+  (D31) stays in force, and no protocol definition changes. The adapter
+  remains blocked until those items and the firmware/hardware approvals exist.
+- **B. Status refresh is satisfied by the existing polling** (D33: a 10 s gap
+  after each completed request, never overlapping, with timestamps, ages,
+  stale labels, cancellation and "gateway unavailable" handling, all
+  unchanged). No server-sent events, WebSockets, other push channel or new
+  dependency in Phase 4. `CLAUDE.md` §4 "When working, fill in cells as
+  records arrive" is dashboard behaviour (build-order item 5, Phase 5); it is
+  NOT implemented, and cell maps, field selection, cell-progress counts and
+  progress UI stay outside Phase 4.
+- **C. Phase 4 software exit evidence** is automated tests plus reproducible
+  local integration tests (including local cloud-sync recovery tests against
+  a local PostgreSQL/Supabase target). Physical LAN, Android-on-LAN, field,
+  hosted Supabase, Vercel and hardware validation are tracked separately
+  under build-order items 8 and 9, as `CLAUDE.md` §12 already lists them
+  there. Local tests are never claimed as evidence for those. No `CLAUDE.md`
+  §10 requirement is removed or downgraded; each stays traceable in the
+  checklist.
+
+**Still required inside Phase 4 (item 4):** the LAN HTTP API (opt-in) and the
+retrying cloud sync worker with its local recovery tests. Neither exists yet.
+LAN binding stays prohibited until a new explicit decision authorises it: D28
+sets the loopback-only bind policy and makes pairing rate limiting a
+prerequisite (now met by D30), and D30 records LAN binding as out of scope
+and unauthorised. D34 does not authorise it.
+
+**Exit checklist:** `docs/architecture.md`, "Phase 4 exit checklist". Its
+criteria and the closing rule are **PROPOSED** and need the project lead's
+approval; only rulings A–C above are decided.
+
+**Open questions (not decided here):** the LAN binding policy and plain-HTTP
+threat model (for the new decision that would authorise LAN binding); the cloud worker's HTTP client (plain `fetch`
+or a new dependency), aggregate atomicity (read-back verification or a cloud
+migration), conflict and backoff policy; Docker approval for the official
+local stack (#17); hosted access (#14, #17).
