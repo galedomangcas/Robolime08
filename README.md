@@ -8,22 +8,29 @@ This repository holds the software (mobile app, web app, shared domain code,
 the offline-first laptop gateway, and the Supabase cloud-mirror schema)
 alongside the team's hardware files.
 
-> **Status: Phase 3.** See [`docs/architecture.md`](docs/architecture.md).
+> **Status: Phase 4 milestones M1–M3 and the research CSV exports (M4) are
+> implemented and committed on the local `main` branch.** As of 2026-10-24
+> they had **not yet been published**: the remote `origin/main` was still at
+> the Phase 3 commit `3a0e695`. Run `git log origin/main..main` to see what
+> is not on the remote yet. See [`docs/architecture.md`](docs/architecture.md).
 >
 > **Software that exists (verified only by automated tests on a development
 > computer):**
 > - Expo app: a landing screen with honest "no data" states.
 > - Offline field gateway (`apps/gateway`): durable SQLite store and
->   migrations, local pairing and sessions, read-only local API handler (no
->   HTTP server yet), cloud-sync outbox, write-before-ACK ingest of simulated
->   radio messages (no real LoRa decoder yet), and a USB-serial protocol
->   session that works on byte arrays (no serial port attached yet).
+>   migrations, local pairing and sessions, a **loopback-only** HTTP server
+>   for the read-only local API with pairing-attempt rate limiting, cloud-sync
+>   outbox, write-before-ACK ingest of simulated radio messages (no real LoRa
+>   decoder yet), a USB-serial protocol session and an opt-in bridge runtime
+>   tested only with a simulated bridge (no serial port attached), and offline
+>   research CSV exports (`npm run export:csv`).
 > - USB serial and LoRa protocol contracts, a packet simulator, and the
 >   Supabase cloud-mirror schema (tested on a throwaway local PostgreSQL only).
 >
-> **Not implemented:** the serial-port connection, LAN HTTP server, cloud
-> upload, app screens, crop scoring and CSV exports. Nothing has been applied
-> to hosted Supabase. **Manual commands are specified but disabled.**
+> **Not implemented:** the serial-port adapter, LAN access (the API is
+> loopback-only; LAN binding needs separate approval), cloud upload, app
+> screens and crop scoring. Nothing has been applied to hosted Supabase.
+> **Manual commands are specified but disabled.**
 >
 > **Not verified on hardware:** no physical robot, ESP32, Ra-02 radio, USB
 > serial link, Android device or field network has been tested. The LoRa byte

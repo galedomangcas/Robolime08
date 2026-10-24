@@ -11,7 +11,8 @@ function readOptional(value: string | undefined): string | null {
 
 /**
  * Default laptop gateway base URL for field (offline) mode, e.g.
- * "http://192.168.137.1:8080". A later phase adds an in-app setting so the
- * operator can change it without rebuilding.
+ * "http://192.168.137.1:8780" (8780 is the gateway's default port). A later
+ * phase adds an in-app setting so the operator can change it without
+ * rebuilding.
  */
 export const defaultGatewayUrl = readOptional(process.env.EXPO_PUBLIC_GATEWAY_URL);
