@@ -1,6 +1,6 @@
 # Local field gateway: storage, pairing, and API contract
 
-Status: **Phase 4, milestone 2**. The durable SQLite store, migrations, local pairing,
+Status: **Phase 4, milestone 3**. The durable SQLite store, migrations, local pairing,
 sessions, the read-only API handler, the sync outbox contract, and demo
 seeding (Phase 2) are implemented and unit tested in `apps/gateway`. Phase 3
 added the protocol layer: `src/protocol/uplink.ts` (validated uplink →
@@ -8,10 +8,13 @@ SQLite → storage ACK, write before ACK) and `src/protocol/bridgeSession.ts`
 (USB serial bytes in/out, half-duplex ACK scheduling), plus the simulator in
 `src/sim/` — see [`protocol.md`](protocol.md). Phase 4 milestone 1 added a
 **loopback-only** HTTP server for the local API (`src/http/`, `npm run serve`);
-milestone 2 added in-memory pairing-attempt rate limiting (D30).
+milestone 2 added in-memory pairing-attempt rate limiting (D30); milestone 3
+added an opt-in **bridge runtime** (`src/runtime/`) that runs the protocol
+session over a byte-transport interface, verified with a simulated bridge only
+(D31).
 **Not built yet:** LAN binding (needs separate approval), web-app hosting,
-live updates, the real LoRa byte codec (spec unsigned), the `serialport`
-connection and timers, and the cloud sync worker.
+live updates, the real LoRa byte codec (spec unsigned), a `serialport`
+adapter for the runtime, and the cloud sync worker.
 
 Everything in this document works with **no internet** and no Supabase.
 
@@ -42,6 +45,7 @@ requires a `field` database.
 | Back up the live database | `npm run db:backup -w @robolime/gateway -- --db <file> --out <new file>` |
 | Serve the local API over HTTP, **loopback only** (see below) | `npm run serve -w @robolime/gateway -- --db <file> [--host 127.0.0.1] [--port 8780]` |
 | Load the **synthetic** demo dataset into a separate demo DB | `npm run db:seed:demo -w @robolime/gateway -- --db <demo file>` |
+| Play a **simulated** robot run through the bridge runtime into a demo DB (see below) | `npm run bridge:simulate -w @robolime/gateway -- --db <demo file> [--cells 6] [--seed 1]` |
 | Regenerate the cloud demo seed SQL | `npm run cloud-seed:generate -w @robolime/gateway` |
 | Tests | `npm test -w @robolime/gateway` |
 
@@ -307,6 +311,88 @@ does, and stops cleanly on Ctrl+C (HTTP server first, then the database).
 - Not part of this server: LAN access, the web app, live updates, the serial
   bridge and cloud sync. Nothing here has been tested on a phone, a LAN or
   hardware.
+
+## Bridge runtime (simulation only, decision D31)
+
+`src/runtime/bridgeRuntime.ts` runs the existing protocol session
+(`src/protocol/bridgeSession.ts`) over a `ByteTransport`
+(`src/runtime/byteTransport.ts`). It adds connecting, a poll timer, ordered
+writes, reconnecting and shutdown; it adds **no** protocol rules, so framing,
+write-before-ACK, deduplication and ACK decisions are exactly those of the
+session and the store. It is opt-in: `npm run serve` does not start it.
+
+- **Transport:** the only implementation is the in-memory
+  `SimulatedBridgeTransport`. There is **no serial-port adapter** and no
+  `serialport` dependency (OPEN_ITEMS #19).
+- **Hardware is refused.** A runtime with `link: 'hardware'` throws
+  `HardwareNotConfiguredError` while `RADIO_SCHEDULE` is `null`
+  (OPEN_ITEMS #20) or the codec is not a signed-off wire format (the
+  `UNSIGNED_LORA_CODEC` placeholder counts as not signed off; OPEN_ITEMS #1).
+  A hardware runtime uses only the committed `RADIO_SCHEDULE`, never a
+  supplied one. Link and transport kinds must match.
+- **Simulation only touches demo databases.** A simulation runtime reads the
+  database's recorded purpose (D17) and refuses anything that is not `demo`,
+  including a database whose purpose cannot be read. It also refuses a
+  wire-format codec.
+- **No timing defaults.** Poll interval, reconnect delays, the failure limit
+  and the write-queue bound must all be supplied. Tests use values marked
+  `TEST_ONLY`; `bridge:simulate` uses values marked `SIMULATION_ONLY`, which
+  only pace an in-memory simulation and are not radio timing.
+- **Lifecycle:** `start()` connects and sends the session's resync + `HELLO`;
+  incoming chunks go to the session with the injected clock; queued ACKs are
+  offered on every poll. Writes are strictly one at a time. `start()` twice is
+  a no-op, `stop()` is idempotent and cancels every timer, and a stopped
+  runtime cannot be restarted (create a new one). Work from an earlier
+  connection or a stopped runtime is ignored, so a late open or write can
+  never revive it.
+- **Failures:** a disconnect or failed write drops frames queued for that
+  connection (they are never replayed on the next one; the session resets the
+  link on reconnect) and reconnects after the supplied delay. Failed opens
+  and disconnects in a row count towards `maxConsecutiveFailures`; the count
+  resets only when the bridge sends a valid frame, so a link that keeps
+  connecting without working also gives up. The runtime then stays in state
+  `failed` until it is replaced.
+- **Bounded writes:** `maxPendingWrites` is the most writes held for the
+  current connection at once, **counting its write in progress plus the
+  queued ones**; further writes are dropped and reported (`writes_dropped`).
+  A write still pending from a lost connection does not count against the new
+  connection. The minimum is 2 (`MIN_PENDING_WRITES`), so the opening resync
+  byte and `HELLO` always fit; smaller values are refused when the runtime is
+  created. Dropping or failing an ACK write never marks the ACK as sent: the
+  reading is already committed, the ACK stays owed, and it is sent in a later
+  response window, in practice after the robot's retry (stored as a
+  `DUPLICATE`).
+- **Events:** an injected sink receives structured events (state, counts,
+  error class names, short session codes such as
+  `reading_stored:inserted`). They never contain payload bytes, reading
+  values, identifiers of robots or runs, error messages, codes or tokens. The
+  sink is best effort: if it throws, the error is ignored and connecting,
+  writing and shutdown carry on.
+- **What is written to the USB link:** on every connection, one raw resync
+  byte (a lone `0x00` delimiter that ends any partial frame left in the
+  bridge, not a frame) and a `HELLO` frame; `FRAME_REJECTED` frames answering
+  corrupt serial frames from the bridge (a USB-link reply, not sent over the
+  radio); and `LORA_TX` frames whose radio payload is a `STORAGE_ACK`. These
+  ACKs are the only radio downlinks; manual commands stay disabled (D21).
+- **Transport contract (limits):** the runtime relies on the transport
+  settling its operations. It has **no timeouts** around `open()`, `write()`
+  or `close()`: an `open()` that never settles leaves the runtime in
+  `connecting` (`stop()` still works); a write from a lost connection that
+  never settles holds back the next connection's writes, because writes stay
+  strictly one at a time; and a `close()` that never settles keeps `stop()`
+  pending. `close()` throwing or rejecting is tolerated. The simulated
+  transport always settles; the rules a future serial adapter must follow are
+  in D31.
+
+`bridge:simulate` requires an explicit `--db` (it ignores `GATEWAY_DB_PATH`),
+an existing **demo** database that contains the synthetic demo robot (run
+`db:seed:demo` first), and refuses field databases. It plays one synthetic run
+(`SIM-RUN-<seed>`) one uplink at a time, prints a summary (new, duplicate and
+conflicting readings, ACKs sent), and stops on Ctrl+C. Re-running the same
+seed adds no readings: robot timestamps differ between runs, so the copies
+are logged as conflicts and the originals are kept. Run `serve` on the same
+demo database to see the result through the API. Verified with unit tests and
+a local CLI run only — no serial port, radio, LAN, phone or hardware.
 
 ## Demo data (synthetic only)
 

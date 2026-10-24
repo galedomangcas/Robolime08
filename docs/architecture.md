@@ -128,11 +128,12 @@ mapping, RLS, type generation).
 | USB serial contract v1 (COBS + CRC-16 framing, streaming reader) | Phase 3 — implemented and tested in software; **proposed** until bridge firmware + loopback test |
 | LoRa contract v1 (logical messages, validation, size limit, codec boundary) | Phase 3 — implemented and tested; **byte layout not signed off**, so the real codec refuses to decode/encode |
 | Write-before-ACK uplink handling + bridge protocol session | Phase 3 — implemented and tested with the simulator (no serial port, no timers) |
+| Bridge runtime (`src/runtime`: transport interface, poll timer, ordered writes, reconnect, `bridge:simulate`) | Phase 4 M3 — implemented and tested with a **simulated** bridge into demo databases only (D31); refuses hardware while the radio schedule and wire codec are unconfirmed; no serial adapter |
 | Packet/bridge simulator (duplicates, gaps, late/out-of-order, retries, dosing + verification) | Phase 3 — implemented; SIMULATION-ONLY codec |
 | Half-duplex downlink scheduler | Phase 3 — implemented and tested; window timing unconfirmed |
 | Manual-command contract, tracker, robot reference model | Phase 3 — specified and tested in simulation; **disabled (D21)** |
 | Firmware (robot ESP32, gateway bridge ESP32, Nano) | Not in this repository; nothing built or flashed |
-| LAN binding (needs separate approval), web-app hosting, live updates, `serialport` connection, gateway runtime/timers, cloud sync worker | Not started (later Phase 4 milestones) |
+| LAN binding (needs separate approval), web-app hosting, live updates, `serialport` adapter for the bridge runtime, cloud sync worker | Not started (later Phase 4 milestones) |
 | Online (cloud) pairing / robot-claim flow | Not started — trusted boundary defined (OPEN_ITEMS #14) |
 | Crop recommendation engine | Not started — rule tables exist; needs sourced crop data |
 | CSV exports | Not started |

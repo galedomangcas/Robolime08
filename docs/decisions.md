@@ -390,3 +390,56 @@ schema change.
 
 **Not verified:** behaviour on a real LAN, a phone, or behind a NAT/hotspot;
 tested with unit, API-handler and loopback HTTP tests only.
+
+## D31 — Bridge runtime over a transport interface, simulation only (Phase 4 M3)
+
+**Context:** `BridgeProtocolSession` (D24, D25) had no caller outside tests:
+nothing connected it to a byte stream, called `poll`, ordered writes or
+handled reconnection.
+
+**Decision:** `apps/gateway/src/runtime/` adds a `ByteTransport` interface,
+a `BridgeRuntime` that drives the unchanged session over it, an in-memory
+`SimulatedBridgeTransport`, and the opt-in `bridge:simulate` command. The
+runtime adds lifecycle only (connect, poll timer, one-at-a-time writes,
+reconnect with supplied delays, idempotent stop with a generation guard
+against stale async work); framing, storage, deduplication and ACK rules stay
+in the session and store.
+
+**Safety rules:** a hardware runtime is refused while `RADIO_SCHEDULE` is
+null or the codec is not a signed-off wire format (the unsigned placeholder
+included), and uses only the committed schedule. A simulation runtime refuses
+any database not recorded as `demo` (D17) and any wire-format codec. Link and
+transport kinds must match. Poll interval, reconnect delays,
+`maxConsecutiveFailures` and `maxPendingWrites` have no defaults (OPEN_ITEMS
+#20); tests use TEST_ONLY values and `bridge:simulate` SIMULATION_ONLY values.
+Repeated failures end in state `failed` (the count resets only on a valid
+frame from the bridge); excess queued writes are dropped and reported, which
+is safe because ACKs are sent only after commit and stay owed until the
+bridge reports them sent. Events are payload-free, and the event sink is best
+effort (an exception from it is ignored).
+
+**Write capacity (audit fix):** `maxPendingWrites` counts the current
+connection's write in progress plus its queued writes; a write still pending
+from a lost connection does not count. Minimum 2, because `session.open()`
+emits a raw resync byte and `HELLO` on every connection.
+
+**Contract a future hardware adapter must meet (not yet enforced by
+timeouts):** the runtime has no timeouts around transport operations, so a
+real `ByteTransport` (e.g. a serial adapter) must guarantee that:
+- `open()` settles: it resolves once bytes can flow, or rejects; it must not
+  stay pending indefinitely (a driver that can hang needs its own timeout).
+- `write()` settles for every call: it resolves once the bytes were handed to
+  the driver, or rejects on failure. On disconnect or `close()`, every pending
+  write must reject (or resolve) promptly; a write that never settles holds
+  back all later writes, including the next connection's handshake.
+- `close()` is idempotent and settles; after it settles no handler is called.
+- `onClose` is reported only for a connection ended without `close()`, and no
+  `onData` follows it.
+Whether these guarantees are met with timeouts in the adapter or in the
+runtime is decided with the adapter (OPEN_ITEMS #19); no timeout values are
+chosen here.
+
+**Not done / not verified:** no serial-port adapter or dependency, no real
+codec, no radio timing; not started by `serve`. Tested with unit tests, a
+simulated bridge and a local CLI run only; no serial, LoRa, LAN, phone or
+hardware testing.
