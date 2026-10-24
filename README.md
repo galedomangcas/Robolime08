@@ -32,14 +32,15 @@ alongside the team's hardware files.
 > screens and crop scoring. Nothing has been applied to hosted Supabase.
 > **Manual commands are specified but disabled.**
 >
-> **Work in progress — M5a, NOT committed yet (decision D33):** in the
-> working tree only, the web build adds a pairing screen and a robot status
-> screen (state, faults, battery voltage, commanded lime, robot time and age,
-> stale and "gateway unavailable" states), served by the gateway on loopback
-> with `--web-dir`. No cell-progress display, map or field selection. Checked
-> by automated tests and headless Edge on loopback with synthetic data only;
-> not on a phone, LAN, Android device, outdoors or hardware. Until it is
-> committed, the statements above describe the committed state.
+> **M5a — committed locally, not yet published (decision D33):** the web
+> build adds a pairing screen and a robot status screen (state, faults,
+> battery voltage, commanded lime, robot time and age, stale and "gateway
+> unavailable" states), served by the gateway on loopback with `--web-dir`.
+> It replaces the landing screen on the web build; the landing screen remains
+> only for native builds without a configured gateway URL. No cell-progress
+> display, map or field selection. Checked by automated tests and headless
+> Edge on loopback with synthetic data only; not on a phone, LAN, Android
+> device, outdoors or hardware.
 >
 > **Not verified on hardware:** no physical robot, ESP32, Ra-02 radio, USB
 > serial link, Android device or field network has been tested. The LoRa byte
