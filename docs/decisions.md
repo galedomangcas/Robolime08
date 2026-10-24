@@ -659,8 +659,9 @@ local stack (#17); hosted access (#14, #17).
 
 **Status:** implemented; tested against an in-process **fake** PostgREST and,
 in the opt-in A2 run (2026-10-25), against a throwaway local PostgreSQL 17.5 +
-standalone PostgREST 16.4 (12 of 12 integration tests passed;
-`cloud-mirror.md`). Not run against the official Supabase stack or the hosted
+standalone PostgREST 16.4 (12 of 12 integration tests passed; a later run
+adding R14, a restart across two real processes with real lease expiry, passed
+13 of 13; `cloud-mirror.md`). Not run against the official Supabase stack or the hosted
 project. Resolves the D34 open questions on the HTTP client, aggregate
 atomicity, conflicts and backoff. The values below are the M6 design
 choices approved by the project lead.
@@ -739,9 +740,9 @@ oldest first.
   clock that jumps forward can end a lease early (the old owner is then
   fenced out); one that jumps back can delay retries.
 - An unexpected exception inside the transport is treated as ambiguous.
-- Tested against the fake endpoint (`src/test/fakePostgrest.ts`) and, once,
-  against local PostgreSQL 17.5 + standalone PostgREST 16.4 with a test-only
-  auth shim (A2). Not covered: the Supabase API gateway (`apikey`), real
-  Supabase roles, Supabase key formats, the hosted project, and a restart
-  across two real processes with real lease expiry (R14). The CLI
-  (`src/cli/sync.ts`) is not an npm script yet.
+- Tested against the fake endpoint (`src/test/fakePostgrest.ts`) and against
+  local PostgreSQL 17.5 + standalone PostgREST 16.4 with a test-only auth shim
+  (A2), including a restart across two real processes with real lease expiry
+  (R14). Not covered: the Supabase API gateway (`apikey`), real Supabase roles,
+  Supabase key formats and the hosted project. The CLI (`src/cli/sync.ts`) is
+  not an npm script yet.

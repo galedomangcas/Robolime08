@@ -13,6 +13,8 @@
 //         database has committed), then destroy the client socket with no reply;
 //       - status: answer with the given status/body without forwarding;
 //       - delay: wait `ms` (optionally running a hook) before forwarding;
+//       - hold_after_commit: forward, wait for the full upstream response,
+//         run an optional hook, then never reply until the client disconnects;
 //   * setRefusing(true) stops listening AND destroys open sockets, so new
 //     connections are refused (ECONNREFUSED); setRefusing(false) re-listens
 //     on the same port.
@@ -128,6 +130,16 @@ export async function startSyncProxy({ upstream, upstreamTimeoutMs = 20_000 }) {
       const reply = await forward(req, path, body);
       if (action?.type === 'drop_after_commit') {
         req.socket.destroy(); // the upstream committed; the client never learns the outcome
+        return;
+      }
+      if (action?.type === 'hold_after_commit') {
+        // The upstream committed (its full reply arrived). Signal, then never answer: the response
+        // is held until the client's connection closes (e.g. its process is killed) or the proxy closes.
+        await new Promise((resolve) => {
+          if (req.socket.destroyed) return resolve();
+          req.socket.once('close', resolve);
+          if (typeof action.onHeld === 'function') Promise.resolve().then(action.onHeld).catch(() => undefined);
+        });
         return;
       }
       const headers = {};

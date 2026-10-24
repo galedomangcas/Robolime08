@@ -1,8 +1,13 @@
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import type { Database } from '../db/connection';
+import { openDatabase, type Database } from '../db/connection';
+import { initDatabase } from '../db/init';
 import { systemClock, toCanonicalUtc, type Clock } from '../db/time';
 import { DEMO_VERIFICATION_RUN, seedDemo } from '../seed/demo';
 import { countByState, getEntry, type OutboxEntityType } from '../store/outbox';
@@ -79,7 +84,8 @@ function env(): ItEnv {
 type ProxyAction =
   | { type: 'drop_after_commit' }
   | { type: 'status'; status: number; code?: string }
-  | { type: 'delay'; ms: number; onDelay?: () => void | Promise<void> };
+  | { type: 'delay'; ms: number; onDelay?: () => void | Promise<void> }
+  | { type: 'hold_after_commit'; onHeld?: () => void | Promise<void> };
 
 interface SyncProxy {
   url: string;
@@ -515,4 +521,229 @@ describe.skipIf(IT === null)('cloud sync against a real local PostgREST (opt-in,
     expect(allSynced(db)).toBe(true);
     await expectCloudMatchesLocal(db);
   });
+
+  // R14. Two real OS processes, real lease expiry (no injected clock). Process A (the CLI,
+  // `--once`) is killed while its claims are `syncing` and right after the cloud committed its
+  // robot insert. Process B is refused while A's lease is live, then, after real expiry, takes
+  // over, recovers the claims and completes. Expect exactly-once cloud rows and confirmations
+  // that are the cloud's own receipt times. Evidence comes from exit codes, CLI output and the
+  // database (the `--once` CLI prints no takeover message; no production logging is added).
+  it(
+    'R14 a restart across two real processes recovers after real lease expiry, exactly once',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'robolime-r14-'));
+      const dbPath = join(dir, 'r14.sqlite');
+      const isolated = await proxyModule.startSyncProxy({ upstream: env().postgrest });
+      const spawned: ChildProcess[] = [];
+      try {
+        const seeded = initDatabase(dbPath, 'demo');
+        seedDemo(seeded);
+        const expected = expectedCloudCounts(seeded);
+        const total = count(seeded, 'sync_outbox');
+        const localIds = seeded.prepare('SELECT entity_type, entity_id FROM sync_outbox ORDER BY id').all();
+        seeded.close();
+
+        // ---- Process A: hold its robot insert after the cloud committed it.
+        let signalHeld: () => void = () => undefined;
+        const held = new Promise<void>((r) => {
+          signalHeld = r;
+        });
+        isolated.addFault({ method: 'POST', table: 'robots', action: { type: 'hold_after_commit', onHeld: () => signalHeld() } });
+        const a = runCli(dbPath, isolated.url, spawned);
+        const first = await Promise.race([held.then(() => 'held' as const), a.done.then(() => 'exited' as const)]);
+        if (first === 'exited') throw new Error(`process A exited before the hold: ${JSON.stringify(await a.done)}`);
+
+        const beforeKill = readLeaseState(dbPath);
+        expect(beforeKill.lease, 'A holds the lease').not.toBeNull();
+        const aOwner = beforeKill.lease?.owner ?? '';
+        const aExpires = beforeKill.lease?.expiresAt ?? '';
+        expect(Date.parse(aExpires)).toBeGreaterThan(Date.now());
+        expect(beforeKill.syncing.length).toBeGreaterThanOrEqual(1);
+        expect(beforeKill.syncing.every((s) => s.claimedBy === aOwner)).toBe(true);
+        expect(beforeKill.syncing.some((s) => s.entityType === 'robot')).toBe(true);
+        expect(await cloudCount('robots')).toBe(1); // A's insert committed before the kill
+
+        // ---- Kill A for real and prove it is gone.
+        killTree(a.child);
+        const aExit = await withTimeout(a.done, 15_000, 'process A did not exit after the kill');
+        observe('R14 process A exit', { code: aExit.code, signal: aExit.signal });
+        expect(processExists(a.pid)).toBe(false);
+        const afterKill = readLeaseState(dbPath);
+        expect(afterKill.lease).toEqual({ owner: aOwner, expiresAt: aExpires }); // still held: nothing ran on exit
+        expect(afterKill.syncing).toEqual(beforeKill.syncing);
+
+        // ---- Process B before expiry: must be refused and change nothing.
+        expect(Date.parse(aExpires) - Date.now(), 'enough time left for the early attempt').toBeGreaterThanOrEqual(60_000);
+        const early = await withTimeout(runCli(dbPath, isolated.url, spawned).done, 60_000, 'early process B did not finish');
+        observe('R14 early process B', { code: early.code, stderr: early.stderr.trim() });
+        expect(early.code).toBe(1);
+        expect(early.stderr).toContain(`Another sync worker holds the lease until ${aExpires}`);
+        const afterEarly = readLeaseState(dbPath);
+        expect(afterEarly.lease).toEqual({ owner: aOwner, expiresAt: aExpires });
+        expect(afterEarly.syncing).toEqual(beforeKill.syncing);
+        expect(await cloudCount('robots')).toBe(1);
+
+        // ---- Wait for REAL expiry (bounded; computed from the stored expiry, no injected clock).
+        const wait = Date.parse(aExpires) + 2_000 - Date.now();
+        expect(wait).toBeLessThanOrEqual(125_000);
+        await new Promise((r) => setTimeout(r, Math.max(0, wait)));
+
+        // ---- Process B after expiry: takes over, recovers A's claims, completes (repeated --once).
+        const runs: CliResult[] = [];
+        for (let i = 0; i < 10 && countSyncedInFile(dbPath) < total; i++) {
+          const run = await withTimeout(runCli(dbPath, isolated.url, spawned).done, 60_000, `process B run ${i + 1} timed out`);
+          runs.push(run);
+          expect(run.code, `process B run ${i + 1}: ${run.stderr.trim()}`).toBe(0);
+          if (i === 0) {
+            const afterTakeover = readLeaseState(dbPath);
+            // A's claims were recovered: none is still syncing under A, and the lease was released.
+            expect(afterTakeover.syncing).toEqual([]);
+            expect(afterTakeover.lease).toBeNull();
+            const robot = readEntry(dbPath, 'robot');
+            expect(robot).toMatchObject({ state: 'synced', attemptCount: 2 }); // A's attempt + B's
+            const duplicates = [...run.stdout.matchAll(/\((\d+) already in the cloud\)/g)].reduce((n, m) => n + Number(m[1]), 0);
+            expect(duplicates, 'A\'s committed robot confirmed as a duplicate').toBeGreaterThanOrEqual(1);
+          }
+        }
+        observe('R14 process B runs', runs.map((r) => ({ code: r.code, stdout: r.stdout.trim() })));
+
+        // ---- Final state: everything synced exactly once, with the cloud's own receipt times.
+        const final = openDatabase(dbPath);
+        try {
+          expect(countByState(final)).toEqual({ pending: 0, syncing: 0, synced: total, failed: 0 });
+          expect(count(final, 'sync_worker_lease')).toBe(0);
+          const entries = final.prepare('SELECT entity_type, entity_id, cloud_confirmed_at FROM sync_outbox ORDER BY id').all();
+          for (const entry of entries) {
+            const type = String(entry.entity_type) as OutboxEntityType;
+            const response = await direct(`${ROOT_TABLE[type]}?select=cloud_received_at&id=eq.${String(entry.entity_id)}`);
+            const rows = (await response.json()) as { cloud_received_at?: unknown }[];
+            expect(rows, `${type} ${String(entry.entity_id)}`).toHaveLength(1);
+            expect(toCanonicalUtc(new Date(Date.parse(String(rows[0]?.cloud_received_at))))).toBe(entry.cloud_confirmed_at);
+          }
+        } finally {
+          final.close();
+        }
+        for (const [table, n] of expected) expect(await cloudCount(table), table).toBe(n);
+        expect(await cloudCount('robots')).toBe(1);
+        const byType = new Map<OutboxEntityType, string[]>();
+        for (const row of localIds) {
+          const type = String(row.entity_type) as OutboxEntityType;
+          byType.set(type, [...(byType.get(type) ?? []), String(row.entity_id).toLowerCase()]);
+        }
+        for (const [type, ids] of byType) {
+          const response = await direct(`${ROOT_TABLE[type]}?select=id`);
+          const cloudIds = ((await response.json()) as { id: string }[]).map((r) => r.id.toLowerCase());
+          expect(cloudIds.sort(), `${ROOT_TABLE[type]} ids`).toEqual(ids.sort());
+        }
+      } finally {
+        for (const child of spawned) killTree(child);
+        await isolated.close();
+        rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      }
+    },
+    240_000,
+  );
 });
+
+// ------------------------------------------------------------- R14 helpers
+
+interface CliResult {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+}
+
+const gatewayDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/** Runs the real sync CLI (`--once`) as a separate OS process against the given loopback target. */
+function runCli(dbPath: string, url: string, spawned: ChildProcess[]): { child: ChildProcess; pid: number; done: Promise<CliResult> } {
+  const childEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    const lower = key.toLowerCase();
+    if (value === undefined || lower.startsWith('robolime_sync_it') || lower.startsWith('supabase_') || lower === 'node_options') continue;
+    childEnv[key] = value;
+  }
+  childEnv.SUPABASE_URL = url; // loopback proxy only (the demo database refuses anything else)
+  childEnv.SUPABASE_SERVICE_ROLE_KEY = env().token; // per-run test token, never printed
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli/sync.ts', '--db', dbPath, '--once'], {
+    cwd: gatewayDir,
+    env: childEnv,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  spawned.push(child);
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
+  child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
+  const done = new Promise<CliResult>((resolveDone, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code, signal) => resolveDone({ code, signal, stdout, stderr }));
+  });
+  if (child.pid === undefined) throw new Error('the sync CLI did not start');
+  return { child, pid: child.pid, done };
+}
+
+/** Force-stops a test-spawned process and its own process tree only. */
+function killTree(child: ChildProcess): void {
+  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  else child.kill('SIGKILL');
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+interface LeaseState {
+  lease: { owner: string; expiresAt: string } | null;
+  syncing: { entityType: string; entityId: string; claimedBy: string | null }[];
+}
+
+/** Reads the shared database file through its own short-lived connection. */
+function readLeaseState(dbPath: string): LeaseState {
+  const db = openDatabase(dbPath);
+  try {
+    const lease = db.prepare('SELECT owner, expires_at FROM sync_worker_lease WHERE id = 1').get();
+    const syncing = db
+      .prepare(`SELECT entity_type, entity_id, claimed_by FROM sync_outbox WHERE state = 'syncing' ORDER BY id`)
+      .all()
+      .map((r) => ({ entityType: String(r.entity_type), entityId: String(r.entity_id), claimedBy: r.claimed_by === null ? null : String(r.claimed_by) }));
+    return { lease: lease === undefined ? null : { owner: String(lease.owner), expiresAt: String(lease.expires_at) }, syncing };
+  } finally {
+    db.close();
+  }
+}
+
+function readEntry(dbPath: string, type: OutboxEntityType): { state: string; attemptCount: number } | null {
+  const db = openDatabase(dbPath);
+  try {
+    const row = db.prepare('SELECT state, attempt_count FROM sync_outbox WHERE entity_type = ? ORDER BY id LIMIT 1').get(type);
+    return row === undefined ? null : { state: String(row.state), attemptCount: Number(row.attempt_count) };
+  } finally {
+    db.close();
+  }
+}
+
+function countSyncedInFile(dbPath: string): number {
+  const db = openDatabase(dbPath);
+  try {
+    return countByState(db).synced;
+  } finally {
+    db.close();
+  }
+}

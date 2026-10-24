@@ -91,8 +91,9 @@ the hosted project. A plain PostgreSQL + PostgREST target was verified locally
 
 **What ran:** the opt-in harness `supabase/tests/run-sync-integration.mjs`
 (with `supabase/tests/sync_proxy.mjs` and
-`apps/gateway/src/sync/worker.integration.test.ts`; these three files are
-**not yet committed**) created a throwaway PostgreSQL 17.5 cluster on
+`apps/gateway/src/sync/worker.integration.test.ts`; the R14 case and the
+proxy's `hold_after_commit` fault were added to the last two files later)
+created a throwaway PostgreSQL 17.5 cluster on
 `127.0.0.1` (its data directory verified before use), applied the test-only
 auth shim and the cloud-mirror migration (no seed), and started two standalone
 **PostgREST 16.4** servers on loopback (one with `db-max-rows = 5`). PostgREST
@@ -110,7 +111,8 @@ PATH="/c/Program Files/PostgreSQL/17/bin:$PATH" \
 POSTGREST_BIN="<path to postgrest.exe>" node supabase/tests/run-sync-integration.mjs
 ```
 
-**Result:** 12 of 12 integration tests passed in one run; the harness then
+**Result:** 12 of 12 integration tests passed in one run; a later run of the
+same harness with R14 added passed 13 of 13. After each run the harness
 stopped both PostgREST processes and the cluster and deleted its temporary
 directory (afterwards: no PostgREST process, no listening test port, no
 leftover directory). A pre-existing PostgreSQL Windows service on the machine
@@ -130,12 +132,30 @@ was not used, stopped or changed.
 | R13 | Refused connection (`ECONNREFUSED`): `network_unavailable`, untried claims back to `pending`; exactly once after recovery |
 | R15 | Lease lost during a request (injected clock): stale worker records nothing; new owner confirms |
 | R16 | Partial aggregate (503 on its second table) never confirmed; completed on retry |
+| R14 | Restart across two real OS processes with real lease expiry (details below) |
 
-**Not covered by this run:** R14 (restart across two real processes with real
-lease expiry), the Supabase API gateway (`apikey` handling), real Supabase
-roles (the run used the test-only auth shim), Supabase key formats, the
-official local stack and the hosted project (OPEN_ITEMS #17). This is not an
-official Supabase verification.
+**R14 (two real processes, real lease expiry, no injected clock).** Both
+processes are the real sync CLI (`src/cli/sync.ts --once`) on the same
+demo-purpose SQLite file. Process A was killed (`taskkill /T /F`) after the
+cloud had committed its robot insert but before A received the response, with
+that entry still `syncing` under A's lease; A's process was confirmed gone and
+the lease and claim were left unchanged. Process B, started while A's lease
+was still valid, exited 1 with "Another sync worker holds the lease until
+<A's expiry>" and changed nothing. After the stored expiry time had passed, B
+took over: its first run confirmed the robot entry as already in the cloud
+(attempt 2, no duplicate row) and released the lease, and further `--once`
+runs completed the rest. All 48 outbox entries ended `synced`, the lease table
+was empty, every `cloud_confirmed_at` equalled the cloud's
+`cloud_received_at`, cloud row counts and root-table ID sets matched the local
+data exactly, and the cloud held one robot row. This verifies the documented
+local scenario (a forced process stop, one shared SQLite file, one machine
+clock); it does not cover other failure modes such as power loss during a
+SQLite write, clock changes or a second machine.
+
+**Not covered by these runs:** the Supabase API gateway (`apikey` handling),
+real Supabase roles (the runs used the test-only auth shim), Supabase key
+formats, the official local stack and the hosted project (OPEN_ITEMS #17).
+This is not an official Supabase verification.
 
 ## Authorization model (RLS)
 
