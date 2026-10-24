@@ -16,7 +16,11 @@ alongside the team's hardware files.
 >
 > **Software that exists (verified only by automated tests on a development
 > computer):**
-> - Expo app: a landing screen with honest "no data" states.
+> - Expo app: the web build shows the pairing and robot-status screens (M5a),
+>   served by the gateway only when started with `--web-dir` or
+>   `GATEWAY_WEB_DIR`. Native builds without a configured gateway URL
+>   (`EXPO_PUBLIC_GATEWAY_URL`) show the earlier landing screen with honest
+>   "no data" states; native use with a gateway URL has not been tested.
 > - Offline field gateway (`apps/gateway`): durable SQLite store and
 >   migrations, local pairing and sessions, a **loopback-only** HTTP server
 >   for the read-only local API with pairing-attempt rate limiting, cloud-sync
