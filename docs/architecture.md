@@ -114,7 +114,8 @@ mapping, RLS, type generation).
 |---|---|
 | Shared domain types (readings, status, run type, timestamps, sync state, field selection, recommendation) | Phase 1–2 — implemented as contracts |
 | Formatting utilities (pH, metric units, state labels, cell progress, staleness) | Phase 1 — implemented and unit tested |
-| Expo app landing screen | Phase 1 — implemented; shows honest "no data" state only |
+| Expo app landing screen | Phase 1 — implemented; now shown only on native builds with no gateway URL configured |
+| Web app: pairing + robot status, served by the gateway (`--web-dir`, loopback) | M5a — implemented in the working tree, **not committed yet**; unit/screen tests and headless-Edge checks on loopback with synthetic data (D33); no cell progress, map or field selection; not tested on a phone, LAN, Android device, outdoors or hardware |
 | Web export (`expo export --platform web`) | Phase 1 — builds locally; all assets bundled, no CDN references |
 | Local SQLite schema, migrations, idempotent reading/status storage | Phase 2 — implemented and tested |
 | Durable sync outbox (state machine, restart recovery) | Phase 2 — contract implemented and tested; upload worker is Phase 4 |

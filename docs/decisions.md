@@ -487,3 +487,100 @@ protect every spreadsheet application.
 first-attempt denominator (#15), real field cell counts (#13), robot clock
 accuracy for elapsed times (#8). Tested with unit tests on temporary
 synthetic databases only.
+
+## D33 — Local web app: pairing and status, served opt-in by the gateway (M5a)
+
+**Scope:** the web build gets a pairing screen and a robot-status screen,
+served by the gateway on its loopback address. No cell-progress counts,
+percentages, map or field-selection UI this milestone; no LAN binding, CORS,
+serial/radio, robot control or cloud work.
+
+**Serving:** opt-in with `--web-dir` / `GATEWAY_WEB_DIR` (off by default, so
+existing behaviour is unchanged). The export is scanned once at startup into
+an exact in-memory allowlist (`/`, `/index.html`, `/favicon.ico`, regular
+files under `/_expo/static/`); no filesystem path is built from a URL. Expo's
+`metadata.json` is not served (the app does not need it). No SPA fallback:
+unknown paths get 404. `/api` and everything under it always go to the API.
+The Host check runs before static serving. `GET`/`HEAD` only.
+
+**CSP (verified in headless Edge, 2026-10-24):** `style-src 'self'` alone
+produced two violations (Expo's inline `expo-reset` style in `index.html`,
+and an empty `<style>` element react-native-web creates) and an unstyled
+page. Adding SHA-256 hashes of those two exact contents gave zero violations
+and a render byte-identical to `'unsafe-inline'`. **Chosen:** hashes,
+computed by the gateway at startup from the served `index.html` plus the
+empty-string hash; `'unsafe-inline'` is not used. Scripts: `'self'` only.
+`connect-src 'self'`. A future export whose styles change is covered after a
+restart; any other new inline style would show up as a CSP violation, not be
+silently allowed.
+
+**Hash input = the text the browser parses, not the file bytes.** Verified
+in Edge for CRLF: a CRLF copy of the export, hashed from raw bytes, was
+blocked; Edge reported the `expo-reset` text with no CR and hashed it (via
+`crypto.subtle` on `textContent`) to the same value as the LF export. The
+gateway therefore applies the HTML parser's own rules before hashing:
+newline normalization (CRLF and lone CR → LF), U+0000 → U+FFFD inside
+`<style>`, and a style ends at `</style` followed by whitespace, `/` or `>`
+(case-insensitive). With that, CRLF and LF exports both gave zero violations
+and identical renders in Edge. Lone-CR and NUL handling were NOT checked in a
+browser: they follow the HTML parsing rules and are covered by unit tests.
+Only HTML `<style>` elements are handled (not SVG `<style>`); an
+unterminated style gets no hash and is blocked (fails closed).
+
+**Successful answers are validated at runtime** before reaching the screens
+(`responseValidation.ts`): required fields, primitive types, the shared enums
+(robot state, error flags, component checks), nullable timestamps, and
+`IsoDateTime` as documented ("ISO 8601 with an explicit offset"). The
+written date and time must be real: day within the month (Gregorian leap
+years), hour 0–23, minute and second 0–59 (no leap second), offset hours
+0–23 and minutes 0–59, matching the LoRa validator's rules (commit
+`395ceee`). They are checked as written, not against the UTC date, so an
+offset crossing midnight stays valid; `Date.parse` alone was not enough
+because it silently shifts e.g. 2026-02-30 to March 2. Numbers must be finite; no ranges are invented because the contract
+gives none. Unknown extra fields are ignored. A failure is an
+`invalid-response` ("unreadable answer"): a retained report becomes "Last
+received" (stale), otherwise "No status data"; the payload is not shown,
+logged or stored. One judgement call: an empty `sessionToken` is rejected
+(the contract types it only as `string`, but an empty bearer token can never
+authenticate and the session store already refuses it).
+
+**App behaviour:**
+- Typed client (pairing, session, robot status) that never throws; failures
+  are `timeout` (own 10 s abort), `unreachable`, `api` (status, code,
+  `Retry-After`) or `invalid-response`. Error details are not kept.
+- Polling: next status request 10 s after the previous one FINISHES (never
+  overlapping); stops on unmount, "Forget this device", and when the gateway
+  rejects the session (UNPAIRED / INVALID_SESSION / SESSION_EXPIRED /
+  SESSION_REVOKED → token cleared, back to pairing with a notice). Ages
+  re-render every 1 s locally (no request).
+- Token storage: `localStorage` on web (survives reloads and gateway
+  restarts); in-memory elsewhere; storage errors behave as "no session".
+  Known limits: readable by any script in the page (mitigated, not removed,
+  by the CSP and no third-party code) and by anyone using the browser
+  profile. "Forget this device" clears only the browser copy; the gateway
+  session stays valid until it expires or the code is re-provisioned. The
+  pairing code is never stored.
+- Display: progress-free state label (WORKING → "Working"), reported faults,
+  battery voltage, total lime **commanded** (labelled as not a measurement),
+  robot time and age, component self-check "Unknown" (bit layout pending).
+  Fresh/stale uses the gateway's threshold (stale only when strictly older).
+  If the gateway becomes unavailable, a retained report is relabelled "Last
+  received" with its time and age and marked stale; with nothing retained,
+  "No status data". Nothing is ever labelled live.
+- The web app always calls its own origin; native builds use
+  `EXPO_PUBLIC_GATEWAY_URL` (unchanged; not tested on a device).
+
+**Tests:** gateway static-serving tests (traversal, encodings, NUL,
+dotfiles, `metadata.json`, methods, Host, `/api` routing, MIME, caching,
+CSP hashing for LF/CRLF/lone CR); app tests for validation, timing (fake
+clock: 10 s timeout, 10 s gap after completion, 1 s local age refresh with no
+request), polling stop on unmount / forget / invalid session, stale boundary
+and gateway-unavailable states. **Symlink escape:** on the Windows
+development machine the file-symlink test is SKIPPED (creating symlinks needs
+extra privileges); a directory-junction escape test runs there and passes,
+and the realpath containment check is a second guard.
+
+**Not done / not tested:** LAN access and phones (loopback only), Android
+devices, outdoor readability, any hardware. Browser checks were headless
+Edge on loopback with synthetic data only. Timings are provisional
+(OPEN_ITEMS #3).

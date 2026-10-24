@@ -279,6 +279,7 @@ does, and stops cleanly on Ctrl+C (HTTP server first, then the database).
 |---|---|---|---|
 | Host | `--host`, `GATEWAY_HOST` | `127.0.0.1` | **loopback IP literals only** (`127.0.0.0/8`, `::1`) |
 | Port | `--port`, `GATEWAY_PORT` | `8780` | integer 1–65535 |
+| Web export | `--web-dir`, `GATEWAY_WEB_DIR` | none (static serving off) | folder from `npm run build:web` (see below) |
 
 - **Loopback only (decision D28).** `0.0.0.0`, `::`, LAN addresses and host
   names are refused with an error — never silently replaced. Phones and
@@ -286,8 +287,10 @@ does, and stops cleanly on Ctrl+C (HTTP server first, then the database).
   Pairing rate limiting now exists (D30), but LAN binding still needs its own
   approval.
 - Only `GET` and `POST` under `/api/v1/`; other methods get `405` (with
-  `Allow: GET, POST`) and other paths `404`. No web app or static files are
-  served yet, and no CORS headers are sent.
+  `Allow: GET, POST`). Every path under `/api` (including unknown versions)
+  goes to the API and gets its JSON `404` if unknown. Other paths get the
+  API's JSON `404` unless the web app is enabled (below). No CORS headers are
+  sent.
 - **Browser-originated requests.** Every request must carry a `Host` header
   naming this server's own bound address and port — `127.0.0.1:<port>`
   (`[::1]:<port>` when bound to IPv6) or `localhost:<port>`; anything else,
@@ -309,9 +312,59 @@ does, and stops cleanly on Ctrl+C (HTTP server first, then the database).
 - The request log contains only time, method, path (without query string),
   status and duration — never headers, `Authorization`, bodies, pairing codes
   or tokens.
-- Not part of this server: LAN access, the web app, live updates, the serial
-  bridge and cloud sync. Nothing here has been tested on a phone, a LAN or
-  hardware.
+- Not part of this server: LAN access, live updates, the serial bridge and
+  cloud sync. Nothing here has been tested on a phone, a LAN or hardware.
+
+### Serving the web app (opt-in, decision D33)
+
+```bash
+npm run build:web
+npm run serve -w @robolime/gateway -- --db <file> --web-dir <ABSOLUTE path to apps/mobile/dist>
+```
+
+Then open `http://127.0.0.1:8780/` **on the gateway computer** (loopback
+only; phones cannot reach it until LAN binding is approved). Pass an absolute
+path, or `../mobile/dist`: `npm run -w` runs inside `apps/gateway`, so
+`apps/mobile/dist` does not resolve there (the gateway then refuses to start
+with "Web export folder not found").
+
+- **Off by default.** Without `--web-dir`/`GATEWAY_WEB_DIR` nothing changes:
+  `/` gets the API's JSON 404. A missing folder or one without `index.html`
+  stops startup before the database is opened.
+- **Exact allowlist, loaded once at startup into memory:** `/` and
+  `/index.html` (the app shell), `/favicon.ico`, and regular files under
+  `/_expo/static/` with an allowed extension. Expo's `metadata.json`,
+  dotfiles, directories, source maps, symlinks/junctions and anything outside
+  the export are never served; there is **no single-page-app fallback**
+  (unknown paths get a plain-text 404). Requests are an exact map lookup; a
+  request target whose raw form differs from its parsed form (`..`, `//`,
+  percent-encoding, backslashes, NUL) is not resolved. Error responses
+  contain no file paths. Rebuilding the export needs a gateway restart.
+  Test coverage note: on the Windows development machine the file-symlink
+  escape test is **skipped** (symlink creation needs extra privileges); the
+  directory-junction escape test runs and passes, and a realpath containment
+  check guards both cases.
+- `GET` and `HEAD` only (`405` with `Allow: GET, HEAD` otherwise). The `Host`
+  check above applies to static files too.
+- Caching: the app shell is `no-store`; content-hashed bundles
+  (`index-<hash>.js`) are `public, max-age=31536000, immutable`; other
+  allowed files `no-cache`.
+- Security headers on every static response (including 404/405):
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `X-Frame-Options: DENY`, and
+  `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' <hashes>; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`.
+  The style hashes are computed at startup from the served `index.html`
+  (Expo's inline `expo-reset` style) plus the empty string (react-native-web
+  creates an empty `<style>` and fills it through the CSSOM, which CSP does
+  not govern). They hash the style text **as the browser parses it** (CRLF
+  and lone CR normalized to LF, NUL → U+FFFD). CRLF and LF exports were
+  verified in headless Edge; lone-CR and NUL handling follow the HTML parsing
+  rules and are covered by unit tests only. `'unsafe-inline'` is not used.
+- The app validates every successful API answer against the shared
+  contract before showing it; a malformed answer is reported as "unreadable
+  answer" and never displayed as status.
+- The web app calls the API on its own origin only, so it needs no
+  configuration and no CORS.
 
 ## Bridge runtime (simulation only, decision D31)
 

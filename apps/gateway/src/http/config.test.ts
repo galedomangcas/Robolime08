@@ -10,21 +10,22 @@ import {
 
 describe('resolveHttpConfig', () => {
   it('defaults to loopback 127.0.0.1 and the documented port', () => {
-    expect(resolveHttpConfig({})).toEqual({ host: '127.0.0.1', port: 8780 });
+    expect(resolveHttpConfig({})).toEqual({ host: '127.0.0.1', port: 8780, webDir: null });
     expect(DEFAULT_GATEWAY_HOST).toBe('127.0.0.1');
     expect(DEFAULT_GATEWAY_PORT).toBe(8780);
   });
 
   it('treats blank values (as in .env.example) as unset', () => {
-    expect(resolveHttpConfig({ GATEWAY_HOST: '', GATEWAY_PORT: '  ' })).toEqual({ host: '127.0.0.1', port: 8780 });
+    expect(resolveHttpConfig({ GATEWAY_HOST: '', GATEWAY_PORT: '  ' })).toEqual({ host: '127.0.0.1', port: 8780, webDir: null });
   });
 
   it('accepts loopback addresses and valid ports, with CLI flags taking precedence over the environment', () => {
-    expect(resolveHttpConfig({ GATEWAY_HOST: '127.0.0.2', GATEWAY_PORT: '9000' })).toEqual({ host: '127.0.0.2', port: 9000 });
-    expect(resolveHttpConfig({ GATEWAY_HOST: '::1' })).toEqual({ host: '::1', port: 8780 });
+    expect(resolveHttpConfig({ GATEWAY_HOST: '127.0.0.2', GATEWAY_PORT: '9000' })).toEqual({ host: '127.0.0.2', port: 9000, webDir: null });
+    expect(resolveHttpConfig({ GATEWAY_HOST: '::1' })).toEqual({ host: '::1', port: 8780, webDir: null });
     expect(resolveHttpConfig({ GATEWAY_PORT: '9000' }, { port: '9100', host: '127.0.0.1' })).toEqual({
       host: '127.0.0.1',
       port: 9100,
+      webDir: null,
     });
     expect(resolveHttpConfig({}, { port: '65535' }).port).toBe(65535);
     expect(resolveHttpConfig({}, { port: '1' }).port).toBe(1);

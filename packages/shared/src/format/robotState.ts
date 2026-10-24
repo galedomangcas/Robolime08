@@ -84,3 +84,18 @@ export function robotStateLabel(input: RobotStateLabelInput): string {
       return 'Manual control';
   }
 }
+
+export interface ProgressFreeStateLabelInput {
+  state: RobotState;
+  errorFlags: readonly ErrorFlag[];
+}
+
+/**
+ * The same wording as `robotStateLabel`, but it never mentions cells or
+ * progress: WORKING is just "Working". Used where cell-progress display is out
+ * of scope (D33); it takes no cell counts, so none can leak into the label.
+ */
+export function robotStateLabelWithoutProgress(input: ProgressFreeStateLabelInput): string {
+  if (input.state === 'WORKING') return 'Working';
+  return robotStateLabel({ state: input.state, errorFlags: input.errorFlags, cellsCompleted: 0, totalCells: 0 });
+}

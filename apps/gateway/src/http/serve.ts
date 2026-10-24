@@ -5,6 +5,7 @@ import { migrate } from '../db/migrate';
 import type { Clock } from '../db/time';
 import { resolveHttpConfig } from './config';
 import { startGatewayHttpServer, type HttpErrorLog, type HttpRequestLog } from './server';
+import { loadStaticSite } from './static';
 
 export interface ServeOptions {
   dbPath: string;
@@ -12,6 +13,8 @@ export interface ServeOptions {
   /** CLI flags; they take precedence over the environment. */
   host?: string;
   port?: string;
+  /** Exported web app folder (--web-dir); overrides GATEWAY_WEB_DIR. */
+  webDir?: string;
   /** Tests only: ephemeral port, bypassing the 1–65535 operator range. */
   portOverride?: number;
   clock?: Clock;
@@ -23,6 +26,8 @@ export interface RunningGateway {
   readonly url: string;
   readonly host: string;
   readonly port: number;
+  /** True when the exported web app is served at the root URL. */
+  readonly servesWebApp: boolean;
   /** Closes the HTTP server first, then the database. Safe to call twice. */
   close(): Promise<void>;
   /** Drops in-flight connections; used only if a graceful close hangs. */
@@ -37,7 +42,9 @@ export interface RunningGateway {
  * Pairing and field-selection requests write through the normal API.
  */
 export async function startGateway(options: ServeOptions): Promise<RunningGateway> {
-  const config = resolveHttpConfig(options.env, { host: options.host, port: options.port });
+  const config = resolveHttpConfig(options.env, { host: options.host, port: options.port, webDir: options.webDir });
+  // Loaded before the database is opened, so a bad export fails fast.
+  const staticSite = config.webDir === null ? undefined : loadStaticSite(config.webDir);
 
   const db: Database = openExistingDatabase(options.dbPath);
   try {
@@ -49,6 +56,7 @@ export async function startGateway(options: ServeOptions): Promise<RunningGatewa
       port: options.portOverride ?? config.port,
       onRequest: options.onRequest,
       onError: options.onError,
+      staticSite,
     });
 
     let closing: Promise<void> | null = null;
@@ -56,6 +64,7 @@ export async function startGateway(options: ServeOptions): Promise<RunningGatewa
       url: http.url,
       host: http.host,
       port: http.port,
+      servesWebApp: staticSite !== undefined,
       close: () => {
         closing ??= http.close().finally(() => {
           if (db.isOpen) db.close();

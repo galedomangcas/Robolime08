@@ -34,6 +34,8 @@ export interface HttpServerConfig {
   host: string;
   /** 1–65535, or 0 (ephemeral) when requested programmatically by tests. */
   port: number;
+  /** Exported web app folder to serve (D33); null = static serving disabled. */
+  webDir: string | null;
 }
 
 export class GatewayConfigError extends Error {
@@ -95,12 +97,14 @@ const present = (value: string | undefined): value is string => value !== undefi
  */
 export function resolveHttpConfig(
   env: Readonly<Record<string, string | undefined>>,
-  overrides: { host?: string; port?: string } = {},
+  overrides: { host?: string; port?: string; webDir?: string } = {},
 ): HttpServerConfig {
   const host = overrides.host ?? env.GATEWAY_HOST;
   const port = overrides.port ?? env.GATEWAY_PORT;
+  const webDir = overrides.webDir ?? env.GATEWAY_WEB_DIR;
   return {
     host: present(host) ? parseHost(host) : DEFAULT_GATEWAY_HOST,
     port: present(port) ? parsePort(port) : DEFAULT_GATEWAY_PORT,
+    webDir: present(webDir) ? webDir.trim() : null,
   };
 }

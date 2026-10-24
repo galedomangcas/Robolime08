@@ -4,8 +4,10 @@ import {
   decodeErrorFlags,
   robotStateFromCode,
   robotStateLabel,
+  robotStateLabelWithoutProgress,
   type RobotStateLabelInput,
 } from './robotState';
+import { ROBOT_STATE_BY_CODE, type RobotState } from '../domain/robot';
 
 const base: Omit<RobotStateLabelInput, 'state'> = {
   errorFlags: [],
@@ -100,5 +102,32 @@ describe('robotStateLabel', () => {
       robotStateLabel({ ...base, state: 'ERROR', errorFlags: ['LIME_EMPTY', 'PUMP_FAULT'] }),
     ).toBe('Error: Lime tank empty, Pump fault');
     expect(robotStateLabel({ ...base, state: 'ERROR' })).toBe('Error: reason not reported');
+  });
+});
+
+describe('robotStateLabelWithoutProgress', () => {
+  const states = Object.values(ROBOT_STATE_BY_CODE) as RobotState[];
+
+  it('never mentions cells, counts or percentages, for any state', () => {
+    for (const state of states) {
+      const label = robotStateLabelWithoutProgress({ state, errorFlags: ['LIME_EMPTY'] });
+      expect(label, state).not.toMatch(/cell|\d|%/i);
+    }
+  });
+
+  it('labels WORKING as plain "Working"', () => {
+    expect(robotStateLabelWithoutProgress({ state: 'WORKING', errorFlags: [] })).toBe('Working');
+  });
+
+  it('uses the existing wording for every other state', () => {
+    for (const state of states.filter((s) => s !== 'WORKING')) {
+      for (const errorFlags of [[], ['PROBE_FAULT', 'GPS_NO_FIX']] as const) {
+        expect(robotStateLabelWithoutProgress({ state, errorFlags })).toBe(robotStateLabel({ ...base, state, errorFlags }));
+      }
+    }
+  });
+
+  it('leaves robotStateLabel unchanged for other consumers', () => {
+    expect(robotStateLabel({ ...base, state: 'WORKING', cellsCompleted: 7, totalCells: 20 })).toBe('Working: 7 of 20 cells (35%)');
   });
 });

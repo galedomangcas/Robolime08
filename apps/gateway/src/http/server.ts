@@ -11,6 +11,7 @@ import {
   REQUEST_TIMEOUT_MS,
   isLoopbackAddress,
 } from './config';
+import { serveStatic, type StaticSite } from './static';
 
 /**
  * Thin `node:http` transport for the local API (Phase 4, milestone 1).
@@ -18,7 +19,9 @@ import {
  * All routing, validation, pairing and robot-scoped authorization stay in
  * `createLocalApi`; this layer only turns HTTP into `ApiRequest` objects and
  * `ApiResponse` objects into JSON. It adds no routes — in particular no
- * robot-control routes — and serves nothing outside /api/v1.
+ * robot-control routes. Outside /api/ it serves only the optional, opt-in
+ * static web export (`staticSite`, decision D33); paths under /api/ always
+ * go to the API, never to static files.
  *
  * Browser-originated requests (decision D28): every request must carry a
  * `Host` naming this server's own loopback address and port (or
@@ -65,6 +68,8 @@ export interface GatewayHttpServerOptions {
   timeouts?: Partial<HttpTimeouts>;
   onRequest?: (entry: HttpRequestLog) => void;
   onError?: (entry: HttpErrorLog) => void;
+  /** Opt-in exported web app (D33). Absent: non-API paths get the API's JSON 404, as before. */
+  staticSite?: StaticSite;
 }
 
 export interface RunningGatewayHttpServer {
@@ -78,6 +83,11 @@ export interface RunningGatewayHttpServer {
 
 const ALLOWED_METHODS = new Set(['GET', 'POST']);
 const API_PREFIX = `${API_V1_BASE_PATH}/`;
+
+/** Everything under /api is reserved for the API, including unknown versions. */
+export function isApiPath(path: string): boolean {
+  return path === '/api' || path.startsWith('/api/');
+}
 
 class BodyTooLargeError extends Error {
   override name = 'BodyTooLargeError';
@@ -168,6 +178,11 @@ export function createRequestListener(options: GatewayHttpServerOptions, allowed
 
   async function handle(req: IncomingMessage, res: ServerResponse, path: string): Promise<number> {
     const method = req.method ?? '';
+    // Runs after the Host check in the listener below, so static files keep
+    // the same DNS-rebinding defence as the API.
+    if (options.staticSite !== undefined && !isApiPath(path)) {
+      return serveStatic(req, res, path, options.staticSite);
+    }
     if (!ALLOWED_METHODS.has(method)) {
       const response = apiErrorResponse('METHOD_NOT_ALLOWED');
       send(res, response, { Allow: 'GET, POST' });
