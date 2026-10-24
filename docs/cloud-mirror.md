@@ -1,10 +1,11 @@
 # Hosted Supabase cloud mirror
 
 Status: **schema, RLS and generated types (Phase 2); sync worker implemented
-(Phase 4, M6b–M6d, decision D35) and tested only against an in-process fake
-PostgREST endpoint.** Nothing has been applied to the hosted Supabase project,
-and the worker has never contacted it, the official local Supabase stack, or a
-PostgreSQL database.
+(Phase 4, M6b–M6d, decision D35), tested against an in-process fake PostgREST
+and, once (A2, 2026-10-25), against a throwaway local PostgreSQL 17.5 with
+standalone PostgREST 16.4** (see "Local real-target verification" below).
+Nothing has been applied to the hosted Supabase project, and the worker has
+never contacted it or the official local Supabase stack.
 
 The cloud is a **one-way mirror** (gateway → Supabase) for online access when
 internet is available. Field operation never depends on it.
@@ -82,8 +83,59 @@ followed. **Server prerequisite:** PostgREST's row cap (`db-max-rows`,
 Supabase default 1000) must be at least the largest aggregate table, or that
 aggregate retries as `read_truncated` and never confirms.
 
-Not yet verified: the official Supabase stack (Docker, OPEN_ITEMS #17), a
-plain PostgreSQL + PostgREST target, and the hosted project.
+Not yet verified: the official Supabase stack (Docker, OPEN_ITEMS #17) and
+the hosted project. A plain PostgreSQL + PostgREST target was verified locally
+(next section).
+
+### Local real-target verification (A2, 2026-10-25)
+
+**What ran:** the opt-in harness `supabase/tests/run-sync-integration.mjs`
+(with `supabase/tests/sync_proxy.mjs` and
+`apps/gateway/src/sync/worker.integration.test.ts`; these three files are
+**not yet committed**) created a throwaway PostgreSQL 17.5 cluster on
+`127.0.0.1` (its data directory verified before use), applied the test-only
+auth shim and the cloud-mirror migration (no seed), and started two standalone
+**PostgREST 16.4** servers on loopback (one with `db-max-rows = 5`). PostgREST
+16.4 is the version the pinned Supabase CLI 2.121.0 uses. Each server was
+accepted only after its unauthenticated root response carried a per-run nonce
+written as the schema comment. Tokens were HS256 test tokens signed with a
+per-run throwaway secret; no real credential, `.env` file, hosted service,
+Docker, LAN or hardware was used. The demo (synthetic) dataset was synced from
+an in-memory demo database, which the worker only allows to sync to loopback.
+On Windows the PostgREST build needs `libpq.dll`, so PostgreSQL's `bin` folder
+was added to `PATH` for that command only:
+
+```bash
+PATH="/c/Program Files/PostgreSQL/17/bin:$PATH" \
+POSTGREST_BIN="<path to postgrest.exe>" node supabase/tests/run-sync-integration.mjs
+```
+
+**Result:** 12 of 12 integration tests passed in one run; the harness then
+stopped both PostgREST processes and the cluster and deleted its temporary
+directory (afterwards: no PostgREST process, no listening test port, no
+leftover directory). A pre-existing PostgreSQL Windows service on the machine
+was not used, stopped or changed.
+
+| Case | Verified behaviour |
+|---|---|
+| R1/R11 | Full sync, parents first under real foreign keys; cloud row counts equal local; `cloud_confirmed_at` equals the cloud's `cloud_received_at` (one entry per type) |
+| R2 | Replaying everything adds no rows; every entry confirmed as a duplicate |
+| R3/R4 | Insert `201` (`Content-Range: */*`), a repeat returns 0 rows; complete read `200` with `0-0/1` |
+| R5/R6 | Row-capped read returns **206** with `Content-Range: 0-4/20`, classified `read_truncated` and never confirmed; insert responses are **not** row-capped (20 of 20 reported) |
+| R7 | Wrongly signed token and `anon`-role token both `auth_rejected` |
+| R8 | Natural-key clash `identity_conflict`; children not uploaded |
+| R9 | Changed cloud content, re-queued, `content_conflict` |
+| R10 | Dosing-only trigger and immutable-reading update both returned `400` / `23514`; only the dosing-only rejection was asserted through the worker's classifier (`row_rejected`) |
+| R12 | Response lost after commit: `outcome_unknown`, then confirmed as a duplicate; one row |
+| R13 | Refused connection (`ECONNREFUSED`): `network_unavailable`, untried claims back to `pending`; exactly once after recovery |
+| R15 | Lease lost during a request (injected clock): stale worker records nothing; new owner confirms |
+| R16 | Partial aggregate (503 on its second table) never confirmed; completed on retry |
+
+**Not covered by this run:** R14 (restart across two real processes with real
+lease expiry), the Supabase API gateway (`apikey` handling), real Supabase
+roles (the run used the test-only auth shim), Supabase key formats, the
+official local stack and the hosted project (OPEN_ITEMS #17). This is not an
+official Supabase verification.
 
 ## Authorization model (RLS)
 

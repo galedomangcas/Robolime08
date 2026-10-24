@@ -17,8 +17,10 @@ serving of the web app (pairing and status screens) on the same **loopback**
 address (`--web-dir`, D33). M6a added the single-worker sync lease and fenced
 outbox claims (migration 0002), and M6b–M6d added the one-way cloud sync
 worker (`src/sync/`, `src/cli/sync.ts`, not yet an npm script; D35). The
-worker has been tested **only against an in-process fake PostgREST
-endpoint**, never against a real PostgreSQL/Supabase target.
+worker has been tested against an in-process fake PostgREST and, in the
+opt-in A2 run, against a throwaway local PostgreSQL 17.5 + standalone
+PostgREST 16.4 (`cloud-mirror.md`); **not** against the official Supabase
+stack or the hosted project.
 **Not built yet:** LAN binding (required for Phase 4; prohibited until a new
 decision authorises it: D28 loopback-only policy, D30 records it as
 unauthorised); the real LoRa byte codec (spec unsigned) and a `serialport`

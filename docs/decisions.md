@@ -637,7 +637,9 @@ classifications only; none of them claims that any work is complete.
 **Still required inside Phase 4 (item 4):** the LAN HTTP API (opt-in) and the
 retrying cloud sync worker with its local recovery tests. Neither exists yet.
 (Later status: the sync worker was implemented in M6a–M6d, see D35, and is
-tested only against a fake endpoint; the LAN HTTP API is still not built.)
+tested against a fake endpoint and a local PostgreSQL + standalone PostgREST
+target, but not the official Supabase stack; the LAN HTTP API is still not
+built.)
 LAN binding stays prohibited until a new explicit decision authorises it: D28
 sets the loopback-only bind policy and makes pairing rate limiting a
 prerequisite (now met by D30), and D30 records LAN binding as out of scope
@@ -655,12 +657,13 @@ local stack (#17); hosted access (#14, #17).
 
 ## D35 — Cloud-sync confirmation contract, outcomes and retry policy (Phase 4, M6a–M6d)
 
-**Status:** implemented and tested against an in-process **fake** PostgREST
-only. Not run against PostgreSQL, the official Supabase stack or the hosted
+**Status:** implemented; tested against an in-process **fake** PostgREST and,
+in the opt-in A2 run (2026-10-25), against a throwaway local PostgreSQL 17.5 +
+standalone PostgREST 16.4 (12 of 12 integration tests passed;
+`cloud-mirror.md`). Not run against the official Supabase stack or the hosted
 project. Resolves the D34 open questions on the HTTP client, aggregate
 atomicity, conflicts and backoff. The values below are the M6 design
-choices approved by the project lead; the closing of Phase 4 rows 6–9 still
-needs real-target evidence (D34-C).
+choices approved by the project lead.
 
 **Single worker (M6a, migration 0002):** one lease row (TTL 120 s, renewed
 every 30 s, also while the worker sleeps). The owner id is a fresh
@@ -736,7 +739,9 @@ oldest first.
   clock that jumps forward can end a lease early (the old owner is then
   fenced out); one that jumps back can delay retries.
 - An unexpected exception inside the transport is treated as ambiguous.
-- Tested only against the fake endpoint (`src/test/fakePostgrest.ts`), which
-  reproduces the cloud schema's primary, unique and foreign keys and
-  PostgREST's formats, but is not PostgREST. The CLI (`src/cli/sync.ts`) is
-  not an npm script yet.
+- Tested against the fake endpoint (`src/test/fakePostgrest.ts`) and, once,
+  against local PostgreSQL 17.5 + standalone PostgREST 16.4 with a test-only
+  auth shim (A2). Not covered: the Supabase API gateway (`apikey`), real
+  Supabase roles, Supabase key formats, the hosted project, and a restart
+  across two real processes with real lease expiry (R14). The CLI
+  (`src/cli/sync.ts`) is not an npm script yet.
