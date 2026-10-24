@@ -257,6 +257,25 @@ describe('gateway HTTP server: malformed and hostile requests', () => {
     if (method !== 'HEAD') expect(code(res)).toBe('METHOD_NOT_ALLOWED');
   });
 
+  it('never grants CORS: no Access-Control-* header on a preflight or on any cross-origin response', async () => {
+    const server = await start(fixture().api);
+    const token = await pair(server);
+    const origin = { origin: 'http://evil.example' };
+    const responses = [
+      await raw(server, {
+        method: 'OPTIONS',
+        path: API_V1_ROUTES.pairing,
+        headers: { ...origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type, authorization' },
+      }),
+      await raw(server, { method: 'GET', path: API_V1_ROUTES.runs, headers: { ...origin, ...bearer(token) } }),
+      await raw(server, { method: 'GET', path: API_V1_ROUTES.session, headers: origin }),
+    ];
+    expect(responses.map((r) => r.status)).toEqual([405, 200, 401]);
+    for (const res of responses) {
+      expect(Object.keys(res.headers).filter((h) => h.startsWith('access-control-'))).toEqual([]);
+    }
+  });
+
   it('answers a supported method on the wrong route with the API’s 405', async () => {
     const server = await start(fixture().api);
     const token = await pair(server);

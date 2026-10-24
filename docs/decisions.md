@@ -122,6 +122,15 @@ the same transaction as the entity. Transitions are enforced by a trigger;
 supplies. Interrupted `syncing` rows return to `pending` at startup. Sync
 order: robot → field → rule set → run → reading → status → recommendation.
 
+**Amended by D35 (Phase 4).** This record is kept as the Phase 2 decision. For
+the sync worker, D35 replaces two parts of it: interrupted claims are
+recovered by takeover of the expired worker lease (or returned on release),
+not by a startup reset; and a fixed type order is replaced by per-entry
+parent gating (a child is claimed only when every parent entry is `synced`).
+A `synced` entry also needs a verified read-back confirmation, not just a
+confirmed write. The outbox table, its states and its trigger-enforced
+transitions are unchanged.
+
 ## D15 — Local pairing: scrypt verifier + hashed opaque session tokens (Phase 2)
 
 Gateway-generated 60-bit codes, stored as salted scrypt (`N=2^14, r=8, p=1`);
@@ -627,6 +636,8 @@ classifications only; none of them claims that any work is complete.
 
 **Still required inside Phase 4 (item 4):** the LAN HTTP API (opt-in) and the
 retrying cloud sync worker with its local recovery tests. Neither exists yet.
+(Later status: the sync worker was implemented in M6a–M6d, see D35, and is
+tested only against a fake endpoint; the LAN HTTP API is still not built.)
 LAN binding stays prohibited until a new explicit decision authorises it: D28
 sets the loopback-only bind policy and makes pairing rate limiting a
 prerequisite (now met by D30), and D30 records LAN binding as out of scope
@@ -641,3 +652,91 @@ threat model (for the new decision that would authorise LAN binding); the cloud 
 or a new dependency), aggregate atomicity (read-back verification or a cloud
 migration), conflict and backoff policy; Docker approval for the official
 local stack (#17); hosted access (#14, #17).
+
+## D35 — Cloud-sync confirmation contract, outcomes and retry policy (Phase 4, M6a–M6d)
+
+**Status:** implemented and tested against an in-process **fake** PostgREST
+only. Not run against PostgreSQL, the official Supabase stack or the hosted
+project. Resolves the D34 open questions on the HTTP client, aggregate
+atomicity, conflicts and backoff. The values below are the M6 design
+choices approved by the project lead; the closing of Phase 4 rows 6–9 still
+needs real-target evidence (D34-C).
+
+**Single worker (M6a, migration 0002):** one lease row (TTL 120 s, renewed
+every 30 s, also while the worker sleeps). The owner id is a fresh
+`randomUUID` per acquisition. Every outbox change made by the worker checks
+owner and expiry inside its own `BEGIN IMMEDIATE` transaction, reading the
+clock there; a database trigger also rejects claims, completions and
+ownership changes by anyone but the current owner. Taking over an expired
+lease returns its claims to `pending` in the same transaction.
+
+**Transport:** built-in `fetch` (no dependency). Inserts are
+`POST /rest/v1/<table>?on_conflict=<primary key>` with
+`Prefer: resolution=ignore-duplicates,return=representation`, so a replay is
+a no-op and the response lists only newly inserted rows. Conflicts target the
+primary key only, so a clash on another unique (natural) key is an error, not
+a silently skipped row. Every request has a 30 s timeout covering the body;
+responses are capped at 4 MiB and shape-checked; redirects are never
+followed; the service-role key sits in a credential object that cannot be
+printed or serialised; server error messages are discarded, only the status
+and the error code are kept. `https` is required except for a loopback
+target, and a demo database may only sync to loopback.
+
+**Confirmation:** an entry becomes `synced` only with a `VerifiedConfirmation`.
+After inserting, the worker reads every table of the aggregate back by the
+entity id (`Prefer: count=exact`) and compares each column with what it sent
+(timestamps as instants, UUIDs case-insensitively, `jsonb` ignoring key
+order). Every local row present with identical content and no extra cloud
+rows → confirmed, with the root row's cloud-assigned `cloud_received_at`.
+"Duplicate" means nothing new was inserted. The confirmation is checked at
+run time (a type cast cannot forge one) and must name the same entry.
+
+**Outcomes:**
+
+| Outcome | When | Outbox result |
+|---|---|---|
+| confirmed / duplicate | read-back matched | `synced` |
+| retryable | not sent (connection refused, DNS, connect timeout), 401/403/42501, 404/schema errors, 429, 5xx with a database code, rejected request, read failures, missing rows (`verification_incomplete`), row-capped read (`read_truncated`) | `failed`, fixed code, backoff retry |
+| ambiguous (`outcome_unknown`) | a write timed out, lost its response, got a 408, or a 5xx without a database code | `failed`, backoff retry. Never treated as success or as failure: the idempotent re-insert plus read-back decides |
+| permanent | 23505 → `identity_conflict`; differing content or extra cloud rows → `content_conflict`; other 23xxx (e.g. 23503 parent missing in the cloud) → `constraint_conflict`; 23514/23502/22xxx → `row_rejected`; aggregate over 512 KiB → `aggregate_too_large` | blocked (`failed`, no retry) until an operator requeues it |
+
+A target-wide failure (network, credentials, server, ambiguous write) stops
+the cycle: unattempted claims return to `pending` with no error recorded.
+
+**Retry policy:** full jitter, `delay = random × min(15 min, 5 s × 2^(attempts−1))`.
+The worker sleeps at least 5 s after a target-wide failure, 15 s when idle, and
+not at all when a full batch (100) was claimed. Retry times are stored in
+SQLite, so they survive restarts. Entries older than 24 h or with at least 20
+attempts are reported by `syncDiagnostics`, never discarded.
+
+**Ordering and fairness:** a child is claimed only when every parent entry is
+`synced`, across batches; each entity type takes at most half of a batch;
+oldest first.
+
+**Known limitations:**
+- An aggregate (field + cells, rule set + rules, recommendation + scores) is
+  several requests, so online readers can briefly see part of one. It is
+  never confirmed until complete. Single-request atomicity would need a cloud
+  RPC and migration (not added).
+- Every 23505 becomes `identity_conflict`; there is no follow-up lookup to
+  tell a natural-key clash from another unique constraint (e.g. a second
+  active field).
+- A rule set is uploaded once and never re-synced. No gateway code changes a
+  rule set after inserting it, and nothing re-queues a synced entry
+  (`markChanged` exists but has no caller). If its status (e.g. approval) or
+  its still-unlocked draft rules were changed locally after it synced (for
+  example by hand), the outbox entry would stay `synced` and the cloud would
+  silently keep the old copy. If such an entry were re-queued by hand, the
+  read-back would find different content and block it as `content_conflict`,
+  because the mirror only inserts and never updates rows. Rule-set re-sync is
+  deferred.
+- PostgREST's `db-max-rows` (Supabase default 1000) must be at least the
+  largest aggregate table, or that aggregate retries as `read_truncated`.
+- The trigger checks owner identity only; expiry is checked in code. A wall
+  clock that jumps forward can end a lease early (the old owner is then
+  fenced out); one that jumps back can delay retries.
+- An unexpected exception inside the transport is treated as ambiguous.
+- Tested only against the fake endpoint (`src/test/fakePostgrest.ts`), which
+  reproduces the cloud schema's primary, unique and foreign keys and
+  PostgREST's formats, but is not PostgREST. The CLI (`src/cli/sync.ts`) is
+  not an npm script yet.

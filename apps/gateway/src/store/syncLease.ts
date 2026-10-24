@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { num, str, strOrNull, withTransaction, type Database, type Row } from '../db/connection';
 import { toCanonicalUtc, type Clock } from '../db/time';
+import { isVerifiedConfirmation, type VerifiedConfirmation } from '../sync/confirmation';
 import { toOutboxEntry, OutboxStateError, type OutboxEntityType, type OutboxEntry } from './outbox';
 
 /**
@@ -320,6 +321,46 @@ export function markBlockedFenced(db: Database, lease: WorkerLease, id: number, 
       `UPDATE sync_outbox SET state = 'failed', claimed_by = NULL, last_error = ?, next_attempt_at = NULL,
          blocked_at = ?, block_reason = ? WHERE id = ?`,
     ).run(reason, toCanonicalUtc(now), reason, id);
+  });
+}
+
+/**
+ * Marks an owned claim 'synced' (M6b). Requires a `VerifiedConfirmation`
+ * issued by read-back verification for THIS entry; a cast object, another
+ * entry's confirmation, or a stale lease is refused without any change.
+ */
+export function markSyncedFenced(
+  db: Database,
+  lease: WorkerLease,
+  id: number,
+  confirmation: VerifiedConfirmation,
+  clock: Clock,
+): void {
+  if (!isVerifiedConfirmation(confirmation)) throw new SyncInputError('Not a verified cloud confirmation');
+  fenced(db, lease, clock, () => {
+    requireOwnedClaim(db, lease.owner, id);
+    const row = db.prepare('SELECT entity_type, entity_id FROM sync_outbox WHERE id = ?').get(id) as Row;
+    if (str(row, 'entity_type') !== confirmation.entityType || str(row, 'entity_id') !== confirmation.entityId) {
+      throw new SyncInputError(`Confirmation does not belong to outbox entry ${id}`);
+    }
+    db.prepare(
+      `UPDATE sync_outbox SET state = 'synced', claimed_by = NULL, cloud_confirmed_at = ?, last_error = NULL,
+         next_attempt_at = NULL WHERE id = ?`,
+    ).run(confirmation.cloudReceivedAt, id);
+  });
+}
+
+/**
+ * Returns owned claims that were never attempted (e.g. the cycle stopped on a
+ * target-wide failure) to 'pending', without recording an error. Fenced;
+ * entries not claimed by this worker are left alone. Returns the count.
+ */
+export function returnClaimsFenced(db: Database, lease: WorkerLease, ids: readonly number[], clock: Clock): number {
+  return fenced(db, lease, clock, () => {
+    const back = db.prepare(
+      `UPDATE sync_outbox SET state = 'pending', claimed_by = NULL WHERE id = ? AND state = 'syncing' AND claimed_by = ?`,
+    );
+    return ids.reduce((n, id) => n + Number(back.run(id, lease.owner).changes), 0);
   });
 }
 

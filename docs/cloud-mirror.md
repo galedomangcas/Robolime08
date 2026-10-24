@@ -1,8 +1,10 @@
 # Hosted Supabase cloud mirror
 
-Status: **Phase 2 — schema, RLS, generated types, and local tests only.**
-Nothing has been applied to the hosted Supabase project. The sync worker that
-uploads records is Phase 4.
+Status: **schema, RLS and generated types (Phase 2); sync worker implemented
+(Phase 4, M6b–M6d, decision D35) and tested only against an in-process fake
+PostgREST endpoint.** Nothing has been applied to the hosted Supabase project,
+and the worker has never contacted it, the official local Supabase stack, or a
+PostgreSQL database.
 
 The cloud is a **one-way mirror** (gateway → Supabase) for online access when
 internet is available. Field operation never depends on it.
@@ -45,10 +47,43 @@ history. **Cloud-only:** `robot_claims`.
 
 ### When is a record "synced"?
 
-Only after a Supabase write **confirms** persistence and returns its
-`cloud_received_at`; the gateway then marks the outbox entry `synced` with
-that time. An attempted upload, a timeout, or a queued request never counts.
-See the state machine in `local-gateway.md`.
+Only after the gateway **reads the aggregate back** from the cloud and finds
+every row it sent with identical content and no extra rows (D35). The outbox
+entry then becomes `synced` with the root row's cloud-assigned
+`cloud_received_at`. An attempted upload, a 2xx status, a timeout, or a queued
+request never counts. See the state machine in `local-gateway.md`.
+
+## Sync worker (Phase 4, D35)
+
+| Path | Purpose |
+|---|---|
+| `apps/gateway/src/sync/confirmation.ts` | Outcome contract: failure classification, read-back verification, retry backoff |
+| `apps/gateway/src/sync/cloudContract.ts` | Cloud primary keys, read-back columns, root tables (type-checked) |
+| `apps/gateway/src/sync/postgrest.ts` | `fetch` transport, target validation, redacted credential |
+| `apps/gateway/src/sync/uploadEntity.ts` | Insert one aggregate, read it back, verify |
+| `apps/gateway/src/sync/worker.ts` | Lease-holding cycle and long-running worker |
+| `apps/gateway/src/cli/sync.ts` | Opt-in command (not yet an npm script) |
+| `apps/gateway/src/test/fakePostgrest.ts` | **Test double** of PostgREST used by the sync tests |
+
+Run (gateway machine only; reads `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`):
+
+```bash
+cd apps/gateway
+npx tsx src/cli/sync.ts --db <file> --once   # one pass, then exit
+npx tsx src/cli/sync.ts --db <file>          # until Ctrl+C
+```
+
+Requests: `POST /rest/v1/<table>?on_conflict=<primary key>` with
+`Prefer: resolution=ignore-duplicates,return=representation`, then
+`GET /rest/v1/<table>?select=*&<column>=eq.<entity id>` with
+`Prefer: count=exact`. A demo database refuses any non-loopback target;
+`https` is required except for a loopback test target. Redirects are never
+followed. **Server prerequisite:** PostgREST's row cap (`db-max-rows`,
+Supabase default 1000) must be at least the largest aggregate table, or that
+aggregate retries as `read_truncated` and never confirms.
+
+Not yet verified: the official Supabase stack (Docker, OPEN_ITEMS #17), a
+plain PostgreSQL + PostgREST target, and the hosted project.
 
 ## Authorization model (RLS)
 

@@ -1,6 +1,6 @@
 # Local field gateway: storage, pairing, and API contract
 
-Status: **Phase 4 — milestones M1–M4 and M5a implemented** (Phase 4 itself is
+Status: **Phase 4 — milestones M1–M4, M5a and M6a–M6d implemented** (Phase 4 itself is
 not complete; see the exit checklist in `architecture.md` and D34). The durable SQLite store, migrations, local pairing,
 sessions, the read-only API handler, the sync outbox contract, and demo
 seeding (Phase 2) are implemented and unit tested in `apps/gateway`. Phase 3
@@ -14,12 +14,15 @@ added an opt-in **bridge runtime** (`src/runtime/`) that runs the protocol
 session over a byte-transport interface, verified with a simulated bridge only
 (D31). M4 added offline research CSV exports (D32), and M5a added opt-in
 serving of the web app (pairing and status screens) on the same **loopback**
-address (`--web-dir`, D33).
+address (`--web-dir`, D33). M6a added the single-worker sync lease and fenced
+outbox claims (migration 0002), and M6b–M6d added the one-way cloud sync
+worker (`src/sync/`, `src/cli/sync.ts`, not yet an npm script; D35). The
+worker has been tested **only against an in-process fake PostgREST
+endpoint**, never against a real PostgreSQL/Supabase target.
 **Not built yet:** LAN binding (required for Phase 4; prohibited until a new
 decision authorises it: D28 loopback-only policy, D30 records it as
-unauthorised) and the cloud sync worker (required for Phase 4); the real LoRa byte
-codec (spec unsigned) and a `serialport` adapter for the runtime (moved to
-build-order item 8, D34). Push-based live updates are not planned for
+unauthorised); the real LoRa byte codec (spec unsigned) and a `serialport`
+adapter for the runtime (moved to build-order item 8, D34). Push-based live updates are not planned for
 Phase 4: status refresh uses the app's 10 s polling (D34).
 
 Everything in this document works with **no internet** and no Supabase.
@@ -160,15 +163,23 @@ pending ──claim──► syncing ──confirmed write──► synced
    └──restart recovery┘                                  synced ──content changed──► pending
 ```
 
-- `markSynced` requires a `CloudConfirmation` (the server-side receipt time
-  from a successful Supabase write) and only works on a `syncing` entry. An
-  attempt alone can never produce `synced`.
-- On startup, `recoverInterrupted` returns `syncing` entries to `pending`
-  (outcome unknown); re-sending is safe because cloud writes are idempotent
-  on the shared IDs.
-- Entities sync parents first: robot → field → rule set → run → reading →
-  status report → recommendation.
-- The Phase 4 worker will implement retries/backoff and the actual upload.
+- The sync worker (D35) changes outbox state only through the lease-fenced
+  API in `store/syncLease.ts` (migration 0002: one live worker lease;
+  `claimed_by` records the claimer). `markSyncedFenced` requires a
+  `VerifiedConfirmation`, issued only after the aggregate was read back from
+  the cloud and matched exactly. An attempt, a 2xx status or a timeout can
+  never produce `synced`.
+- A failed or ambiguous attempt becomes `failed` with a fixed code and a
+  backoff retry time; a permanent conflict becomes `failed` + `blocked_at` /
+  `block_reason` (no retry) until an operator requeues it.
+- Claims of a worker that stopped or crashed return to `pending` on release
+  or on takeover of its expired lease. The older `recoverInterrupted`,
+  `claimBatch`, `markSynced` and `markFailed` remain only for entries claimed
+  without an owner; no production code calls them.
+- A child is claimed only when every parent entry is `synced` (robot → field
+  and run; field → run; run → reading and recommendation; rule set →
+  recommendation; robot → status report), and each entity type takes at most
+  half of a batch.
 
 ## Local pairing and sessions
 
