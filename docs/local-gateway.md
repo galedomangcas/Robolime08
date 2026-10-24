@@ -46,6 +46,7 @@ requires a `field` database.
 | Serve the local API over HTTP, **loopback only** (see below) | `npm run serve -w @robolime/gateway -- --db <file> [--host 127.0.0.1] [--port 8780]` |
 | Load the **synthetic** demo dataset into a separate demo DB | `npm run db:seed:demo -w @robolime/gateway -- --db <demo file>` |
 | Play a **simulated** robot run through the bridge runtime into a demo DB (see below) | `npm run bridge:simulate -w @robolime/gateway -- --db <demo file> [--cells 6] [--seed 1]` |
+| Write a research CSV, read-only (see "Research CSV exports") | `npm run export:csv -w @robolime/gateway -- --db <file> --kind <readings, paired or delivery> --run <run id> --out <new file>` |
 | Regenerate the cloud demo seed SQL | `npm run cloud-seed:generate -w @robolime/gateway` |
 | Tests | `npm test -w @robolime/gateway` |
 
@@ -393,6 +394,130 @@ seed adds no readings: robot timestamps differ between runs, so the copies
 are logged as conflicts and the originals are kept. Run `serve` on the same
 demo database to see the result through the API. Verified with unit tests and
 a local CLI run only — no serial port, radio, LAN, phone or hardware.
+
+## Research CSV exports (decision D32)
+
+`npm run export:csv` writes one CSV for the research team from a local
+gateway database, with no network, cloud or hardware involved. It opens the
+database with SQLite's **read-only** flag (it cannot change it), works on
+`field` and `demo` databases, and **never overwrites** an existing file
+(choose a new `--out`). The whole CSV is built before anything is written.
+It is then written to a uniquely named temporary file in the same folder,
+flushed to disk, and published under the final name with a hard link, which
+is atomic and fails if the name already exists; the temporary file is then
+removed. So the output name is either absent or complete, and a failed write
+leaves no partial output file. If the temporary file cannot be removed, the
+original error is kept and the message (or, after a successful export, a
+warning) names the leftover file.
+- **Limitation:** there is no fallback to a direct write. If the hard link
+  cannot be created for any reason (for example a FAT32/exFAT USB drive
+  without hard links, missing permission, a full disk), the export fails,
+  nothing is published, the temporary file is removed and the error says so.
+  Export to an NTFS (Windows laptop) or ext4 (Raspberry Pi) folder, then copy
+  the finished file elsewhere if needed.
+
+```
+npm run export:csv -w @robolime/gateway -- --db <file> --kind readings --run <run id> --out <new.csv>
+npm run export:csv -w @robolime/gateway -- --db <file> --kind delivery --run <run id> --out <new.csv>
+npm run export:csv -w @robolime/gateway -- --db <file> --kind paired --run <dosing run id> \
+  --verification-run <verification run id> --out <new.csv>
+```
+
+- `--db`, `--kind`, `--run` and `--out` are required (`GATEWAY_DB_PATH` is
+  not used). `--run` is the **firmware run id** (`runs.source_run_id`). Add
+  `--robot <firmware robot id>` if the same run id exists for more than one
+  robot. `--verification-run` is required for, and only accepted with,
+  `--kind paired`.
+- Format: RFC 4180, UTF-8 without BOM, CRLF line endings, a header row with
+  the exact column names below. Fields containing a comma, quote or line
+  break are quoted (quotes doubled). **A missing value is an empty field**;
+  no other placeholder or numeric default is used. Booleans are
+  `true`/`false`. Timestamps are UTC ISO-8601 with milliseconds. Units: pH
+  unitless, moisture %, temperature °C, volumes mL, elapsed time seconds.
+  **EC is the stored value with an unconfirmed unit** (`…ec_unit_unconfirmed`,
+  OPEN_ITEMS #7).
+- **Spreadsheet formula injection:** quoting alone does not stop a
+  spreadsheet from running a cell such as `=HYPERLINK(…)`. Every text field
+  that would start a formula gets one leading `'` (single quote) in the
+  file, which Excel, LibreOffice and Google Sheets treat as "this cell is
+  text". A field is prefixed when it starts with `=`, `+`, `-` or `@`, when
+  one of those follows leading whitespace or control characters (including
+  tab, CR, LF, NUL, U+00A0 no-break space, U+200B zero-width space and
+  U+FEFF), or when it starts with a tab or CR. The original text follows the
+  `'` unchanged, so remove exactly one leading `'` to recover it; the
+  database is never changed, and `--run`/`--robot` take the real,
+  un-prefixed identifiers. In practice only identifier columns (`run_id`,
+  `robot_id`, `dosing_run_id`, `verification_run_id`) can be affected; all
+  measurements, counts and ratios are written as numbers and are never
+  prefixed, so negative values such as `-1.5` stay numeric. This follows
+  common guidance (OWASP) and is not a guarantee for every application;
+  open exported files as text or import them as CSV rather than relying on
+  a spreadsheet's automatic interpretation.
+- Synthetic data is marked: `is_synthetic` is `true` for demo or simulated
+  runs.
+
+**`readings`** — one row per stored reading, i.e. per reading identity
+(run, `cell_index`, `seq`), ordered by `cell_index` then `seq`. Values are
+exactly as stored from the first copy received; retransmitted copies are not
+repeated (they are counted in `delivery`). Columns: `run_id, run_type,
+robot_id, is_synthetic, cell_index, seq, attempt_count, ph,
+ec_unit_unconfirmed, moisture_percent, temperature_c, dose_volume_ml,
+expected_post_correction_ph, gps_latitude, gps_longitude, raw_flags,
+robot_recorded_at, gateway_received_at`. `attempt_count` is the robot's
+attempt number of the first copy received; whether numbering starts at 0 or
+1 is unconfirmed (OPEN_ITEMS #15). `dose_volume_ml` is the commanded volume.
+
+**`paired`** — the schema records no link between a dosing run and its
+verification run, so both are named, and rows are paired **only by
+`cell_index`**. The runs must be a dosing and a verification run of the same
+robot, and not on different recorded fields; otherwise the export is
+refused. One row per cell index present in either run, ascending.
+`pair_status` is `paired` (exactly one reading in each run),
+`missing_verification` / `missing_dosing` (only that run's values are
+filled), or `ambiguous_multiple_readings` (a run holds more than one reading
+for the cell: **no reading is chosen**, all value columns are empty and only
+the counts are given). Columns: `cell_index, pair_status, dosing_run_id,
+verification_run_id, robot_id, is_synthetic, dosing_reading_count,
+verification_reading_count, dosing_seq, verification_seq, baseline_ph,
+baseline_ec_unit_unconfirmed, baseline_moisture_percent,
+baseline_temperature_c, dose_volume_ml, expected_post_correction_ph,
+observed_post_treatment_ph, verification_ec_unit_unconfirmed,
+verification_moisture_percent, verification_temperature_c,
+dosing_gps_latitude, dosing_gps_longitude, dosing_robot_recorded_at,
+verification_robot_recorded_at, elapsed_seconds`.
+`expected_post_correction_ph` is the robot's stored value (never
+recalculated); `observed_post_treatment_ph` is the verification reading's
+measured pH. `elapsed_seconds` = verification `robot_recorded_at` − dosing
+`robot_recorded_at`, positive when the verification is later; both come from
+the robot clock, whose accuracy is unconfirmed (OPEN_ITEMS #8). This export
+is research data and is never shown on farmer-facing screens.
+
+**`delivery`** — one row for the run. Columns: `run_id, run_type, robot_id,
+is_synthetic, readings_stored, distinct_cells_received, receipts_total,
+receipts_inserted, receipts_duplicate, receipts_conflict,
+readings_with_retransmissions, expected_cells, expected_cells_source,
+completeness_numerator, completeness_denominator, post_retry_completeness,
+cells_outside_field, completeness_note, first_attempt_delivery_ratio,
+first_attempt_note`.
+- Sources: `readings` (one row per reading identity) and `reading_receipts`
+  (every received copy, with outcome `inserted`, `duplicate` or `conflict`).
+  Copies the gateway never received leave no trace.
+- **Post-retry completeness** = distinct cell indices with at least one
+  stored reading and `0 ≤ cell_index < expected_cells`, divided by
+  `expected_cells`. `expected_cells` is the `total_cells` of the field the
+  run was recorded on (`runs.field_id`); cell indices 0 … total_cells − 1 are
+  the field's valid cells (enforced when a field is provisioned). Received
+  cells outside that range are counted in `cells_outside_field`. If the run
+  has no field, or the field has no `total_cells`, the completeness columns
+  are empty and `completeness_note` gives the reason (OPEN_ITEMS #13).
+- **First-attempt delivery ratio is not computed**: whether attempt numbers
+  start at 0 or 1 is unconfirmed (OPEN_ITEMS #15). The column is always
+  empty, `first_attempt_note` says why, and the raw attempt numbers are in
+  the `readings` export.
+
+Not included: an HTTP export route, app or web UI, statistics, or any
+cloud upload. Verified with unit tests on temporary synthetic databases
+only.
 
 ## Demo data (synthetic only)
 

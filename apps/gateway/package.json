@@ -17,7 +17,8 @@
     "cloud-seed:generate": "tsx src/cli/generate-cloud-seed.ts",
     "db:backup": "tsx src/cli/db-backup.ts",
     "serve": "tsx src/cli/serve.ts",
-    "bridge:simulate": "tsx src/cli/bridge-simulate.ts"
+    "bridge:simulate": "tsx src/cli/bridge-simulate.ts",
+    "export:csv": "tsx src/cli/export-csv.ts"
   },
   "dependencies": {
     "@robolime/shared": "0.1.0",

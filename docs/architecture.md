@@ -136,7 +136,7 @@ mapping, RLS, type generation).
 | LAN binding (needs separate approval), web-app hosting, live updates, `serialport` adapter for the bridge runtime, cloud sync worker | Not started (later Phase 4 milestones) |
 | Online (cloud) pairing / robot-claim flow | Not started — trusted boundary defined (OPEN_ITEMS #14) |
 | Crop recommendation engine | Not started — rule tables exist; needs sourced crop data |
-| CSV exports | Not started |
+| Research CSV exports (`src/exports`, `npm run export:csv`: readings, paired dosing/verification, delivery) | M4 — implemented and tested offline from local SQLite, read-only (D32); first-attempt delivery ratio not computed (OPEN_ITEMS #15); EC unit unconfirmed (#7); no HTTP route or app UI yet |
 | Vercel deployment | Not changed — see "Vercel" below |
 
 ## Timestamps

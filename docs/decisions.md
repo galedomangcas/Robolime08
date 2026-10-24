@@ -443,3 +443,47 @@ chosen here.
 codec, no radio timing; not started by `serve`. Tested with unit tests, a
 simulated bridge and a local CLI run only; no serial, LoRa, LAN, phone or
 hardware testing.
+
+## D32 — Offline research CSV exports from local SQLite (M4)
+
+**Context:** CLAUDE.md §9 requires three research exports (readings per
+run, paired dosing/verification, delivery) generated from local durable
+records without internet.
+
+**Decision:** `apps/gateway/src/exports/` and `npm run export:csv` build the
+CSVs from the existing tables only, through a connection opened with
+SQLite's read-only flag. The file is never overwritten and never left
+partial: it is written to a temporary file in the same folder, fsynced, and
+published with a hard link (atomic, fails if the name exists), then the
+temporary file is removed. There is deliberately no fallback to a direct
+write: link error codes (e.g. EPERM) cannot reliably distinguish "hard links
+unsupported" from permission or I/O failures, so any link failure fails the
+export with nothing published; the target folders (NTFS, ext4) support hard
+links. RFC 4180, UTF-8, CRLF, fixed headers,
+empty field for a missing value. No schema change, HTTP route, UI or network
+use.
+
+**Formula-injection hardening:** every text field that would start a
+spreadsheet formula (`=`, `+`, `-`, `@`, also after leading whitespace or
+control characters, or a leading tab or CR) is written with one leading `'`;
+the original text follows unchanged and the database is not modified.
+Numbers are never prefixed. This follows OWASP guidance and is not claimed to
+protect every spreadsheet application.
+
+**Research definitions approved by the project lead (2026-10-24):**
+- EC is exported as the stored value under `…ec_unit_unconfirmed`,
+  provisional until OPEN_ITEMS #7 confirms the unit.
+- Paired export: rows pair by cell index only (no run-to-run link exists in
+  the schema). A cell with more than one reading in either run is
+  `ambiguous_multiple_readings`, with values empty and counts given; no
+  reading is chosen.
+- Post-retry completeness: denominator = the run's field `total_cells`
+  (`runs.field_id` → `fields`); empty, with the reason, when the run has no
+  field or the field has no total.
+- First-attempt delivery ratio: not computed until OPEN_ITEMS #15 confirms
+  the attempt-number base; the column stays in the header, always empty.
+
+**Not decided here:** the EC unit (#7), the attempt-number base and a
+first-attempt denominator (#15), real field cell counts (#13), robot clock
+accuracy for elapsed times (#8). Tested with unit tests on temporary
+synthetic databases only.
