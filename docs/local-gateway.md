@@ -21,9 +21,9 @@ worker has been tested against an in-process fake PostgREST and, in the
 opt-in A2 run, against a throwaway local PostgreSQL 17.5 + standalone
 PostgREST 16.4 (`cloud-mirror.md`); **not** against the official Supabase
 stack or the hosted project.
-**Not built yet:** LAN binding (required for Phase 4; prohibited until a new
-decision authorises it: D28 loopback-only policy, D30 records it as
-unauthorised); the real LoRa byte codec (spec unsigned) and a `serialport`
+**Not built yet:** LAN binding (required for Phase 4; D36 records the opt-in
+policy, approved for documentation only; implementation needs separate
+authorisation); the real LoRa byte codec (spec unsigned) and a `serialport`
 adapter for the runtime (moved to build-order item 8, D34). Push-based live updates are not planned for
 Phase 4: status refresh uses the app's 10 s polling (D34).
 
@@ -204,9 +204,11 @@ multi-user authentication and does not identify a person.
 - Failed pairing attempts are rate limited per client address (see
   "Pairing-attempt rate limiting" below).
 - Known limits: plain HTTP on the field LAN (no TLS) means a device on the
-  same Wi-Fi could observe tokens; the HTTP server is still loopback-only, and
-  exposing the API on the LAN needs a separate approval (D28, D30); anyone
-  with the laptop's disk can read the stored data.
+  same Wi-Fi could observe tokens; the HTTP server is still loopback-only.
+  D36 (proposed) accepts that plain-HTTP risk for this semester on a trusted,
+  password-protected field network only (never the public internet), but LAN
+  binding is not implemented. Anyone with the laptop's disk can read the
+  stored data.
 
 ### Pairing-attempt rate limiting (decision D30)
 
@@ -249,7 +251,8 @@ multi-user authentication and does not identify a person.
   use many addresses on the field Wi-Fi gets 5 attempts per address; the
   60-bit code and the scrypt cost remain the main protection.
 - **LAN binding remains disabled.** Rate limiting was the documented
-  prerequisite; binding to a LAN interface still needs its own approval.
+  prerequisite. D36 records the LAN policy and keeps this rate limit
+  unchanged; implementing it needs separate authorisation.
 
 ## Local API contract (v1)
 
@@ -303,8 +306,9 @@ does, and stops cleanly on Ctrl+C (HTTP server first, then the database).
 - **Loopback only (decision D28).** `0.0.0.0`, `::`, LAN addresses and host
   names are refused with an error — never silently replaced. Phones and
   tablets on the field Wi-Fi therefore **cannot** reach this server yet.
-  Pairing rate limiting now exists (D30), but LAN binding still needs its own
-  approval.
+  D36 records the opt-in LAN policy (explicit, assigned RFC 1918 IPv4 address, fail closed,
+  exact-IP Host check); it is approved for documentation only and not
+  implemented.
 - Only `GET` and `POST` under `/api/v1/`; other methods get `405` (with
   `Allow: GET, POST`). Every path under `/api` (including unknown versions)
   goes to the API and gets its JSON `404` if unknown. Other paths get the

@@ -303,7 +303,9 @@ accepted, and wildcard or LAN addresses are refused with an error instead of
 being silently replaced. Pairing-attempt rate limiting (OPEN_ITEMS #16) must
 exist before LAN binding is allowed; until then the field Wi-Fi cannot reach
 the API, which is intentional. Tested on loopback only; no LAN, phone or
-hardware testing has been done.
+hardware testing has been done. (Later status: D36 records an opt-in LAN bind
+policy that would amend this; it is approved for documentation only and not
+implemented, so this loopback-only policy still applies.)
 
 **Browser-originated requests (M1 review fix):** loopback binding alone does
 not stop a web page on the same laptop from reaching the server. Every
@@ -643,7 +645,9 @@ built.)
 LAN binding stays prohibited until a new explicit decision authorises it: D28
 sets the loopback-only bind policy and makes pairing rate limiting a
 prerequisite (now met by D30), and D30 records LAN binding as out of scope
-and unauthorised. D34 does not authorise it.
+and unauthorised. D34 does not authorise it. (Later status: D36 records the
+LAN binding policy and plain-HTTP threat model; it is approved for
+documentation only and not implemented.)
 
 **Exit checklist:** `docs/architecture.md`, "Phase 4 exit checklist". Its
 criteria and the closing rule are **PROPOSED** and need the project lead's
@@ -746,3 +750,101 @@ oldest first.
   (R14). Not covered: the Supabase API gateway (`apikey`), real Supabase roles,
   Supabase key formats and the hosted project. The CLI (`src/cli/sync.ts`) is
   not an npm script yet.
+
+## D36 — Opt-in LAN binding for the local HTTP API (Phase 4, checklist row 5)
+
+**Status: PROPOSED — approved for documentation, NOT IMPLEMENTED.** The project
+lead approved this decision text for the record. That is not authorisation to
+implement it: the gateway stays loopback-only until a separate implementation
+authorisation is given and the acceptance criteria below pass. Amends D28's
+bind policy only; D30 is unchanged.
+
+**Context:** `CLAUDE.md` §3 requires the gateway API and the gateway-served web
+app to be reachable from a phone on the field Wi-Fi without internet, bound to
+the intended LAN interface and never exposed publicly. D28 made the server
+loopback-only and named pairing rate limiting as the prerequisite; D30 met it
+but recorded LAN binding as unauthorised; D34 left "the LAN binding policy and
+plain-HTTP threat model" open.
+
+**1. Default (unchanged).** With no LAN setting the gateway binds `127.0.0.1`
+(`DEFAULT_GATEWAY_HOST`) and refuses every non-loopback address, exactly as
+today.
+
+**2. Explicit opt-in.** LAN access requires **both** an explicit LAN-mode
+setting **and** an explicit bind address that is an IPv4 literal inside
+RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and assigned to a
+local network interface at start-up. Either one alone is refused. Setting names
+(e.g. `GATEWAY_LAN_MODE`, `--lan`) are proposals, fixed at implementation.
+
+**3. Fail closed.** The gateway refuses to start, with an error that names the
+problem and echoes no other setting, when LAN mode is on and the address is
+missing; is a wildcard (`0.0.0.0`, `::`), loopback, public, link-local
+(`169.254/16`), CGNAT (`100.64/10`), multicast, IPv6 or not an IP literal; is
+not assigned to a local interface; or cannot be bound. It never falls back to
+loopback, another interface or a broader address. If the address disappears
+while running (Wi-Fi/DHCP change) the gateway does not rebind on its own; the
+operator restarts it.
+
+**4. Request security.** In LAN mode the Host check accepts **exactly**
+`<bound LAN IPv4>:<port>` (amending D28's allow-list, which also accepts
+`localhost`); there are **no extra hostnames** in the initial design. Every
+other D28 control stays unchanged for every client: `GET`/`POST` only;
+JSON-only UTF-8 `POST` checked before the body is read; the 16 KiB body limit;
+header/request/keep-alive timeouts; no CORS headers; `no-store`/`nosniff`/
+`no-referrer`; generic 500s; logs without headers, bodies, pairing codes,
+tokens or query strings. Authorisation is unchanged: a valid session token on
+every route except pairing, sessions scoped to one robot, the scrypt pairing
+verifier and hashed tokens, and no robot-control routes. The D33 web app keeps
+its same-origin CSP.
+
+**5. D30 unchanged.** At most 5 failed pairing attempts per client socket
+address within 15 minutes, `429 PAIRING_RATE_LIMITED` with `Retry-After`, in
+memory only, forwarded headers ignored.
+
+**6. Threat model and accepted risk.** For a trusted, password-protected
+(WPA2/WPA3) field Wi-Fi or laptop hotspot only; **never** the public internet
+or a public/shared network. Plain HTTP is not encrypted: any device on the same
+network can observe or alter traffic, including pairing codes, session tokens
+and field data, and could replay a captured token until it expires. Wi-Fi
+encryption protects against outsiders, not other members of the network. A
+private IP address provides neither authentication nor confidentiality. This
+risk is **accepted for this semester** and documented, not mitigated.
+**Operator precautions:** a Wi-Fi password and team devices only; a Windows
+firewall inbound rule scoped to the Private profile, the gateway port and the
+local subnet, removed after use; the gateway never changes firewall settings.
+
+**7. Deferred: same-subnet restriction.** Refusing clients outside the bound
+interface's subnet is **not adopted**. Whether it works correctly with the
+Windows hotspot and the intended field access points is unknown (OPEN_ITEMS
+#6); it needs evidence from those networks and a separate decision.
+
+**8. Separate decisions or milestones (not part of D36):** TLS for LAN mode; a
+shorter session lifetime (OPEN_ITEMS #16); the Android in-app gateway URL
+setting; persistent native session storage; Android cleartext-HTTP
+configuration for release builds. Until then the build-time
+`EXPO_PUBLIC_GATEWAY_URL` stays the only native URL source.
+
+**9. Unchanged safety boundaries.** `MANUAL_COMMANDS_APPROVED=false`,
+`RADIO_SCHEDULE=null` and `DEFAULT_GATEWAY_HOST='127.0.0.1'` stay as they are.
+Offline-first: SQLite remains the source of truth, LAN mode needs no internet or
+Supabase, and write-before-ACK ordering and durability are untouched. No robot
+commands, serial/LoRa transmission, actuator control or Protocol v2.
+
+**10. Acceptance (both required, neither done).** *Automated security tests:*
+default stays loopback; opt-in needs mode and address; RFC 1918 classifier
+with boundary cases; unassigned/invalid/unbindable addresses fail closed with
+no fallback; LAN-mode Host check rejects `localhost`, other IPs, the wrong
+port, rebinding names and malformed or missing `Host`; over a real socket on a
+private address, unpaired, invalid-token, robot-scope and D30 behaviour;
+unchanged 405/413/415/408/500, no CORS, secret-free logs; works without
+internet and survives a restart; all suites, typecheck and lint green with the
+gates unchanged. Real-socket LAN tests skip visibly when the test machine has
+no private interface. *Physical test* (build-order item 8, OPEN_ITEMS #6): an
+Android phone on the laptop hotspot or field access point with no internet,
+the firewall rule, client isolation, pairing and status over the LAN IP, the
+served web app, unreachability from other networks, and data surviving a
+restart. Automated tests alone do not establish LAN acceptance.
+
+**Relationship to other decisions:** amends D28's bind policy and its Host
+allow-list in LAN mode; keeps all other D28 controls and all of D30; records
+the policy D34 left open. Checklist row 5 stays **Not implemented**.
