@@ -16,7 +16,7 @@ const EXPECTED_TABLES = [
   'field_cells', 'field_selections', 'fields', 'gateway_settings', 'local_sessions', 'pairing_credentials',
   'reading_receipts', 'readings', 'recommendation_scores', 'recommendations', 'robot_status_reports', 'robots',
   'rule_crops', 'rule_seasonal_weather_defaults', 'rule_seasons', 'rule_sets', 'rule_suitability_ranges', 'runs',
-  'schema_migrations', 'sync_outbox',
+  'schema_migrations', 'sync_outbox', 'sync_worker_lease',
 ];
 
 let cleanup: (() => void) | undefined;
@@ -28,7 +28,7 @@ afterEach(() => {
 describe('migrate', () => {
   it('creates the full schema on an empty database', () => {
     const db = openDatabase(':memory:');
-    expect(migrate(db, undefined, T0).applied).toEqual([1]);
+    expect(migrate(db, undefined, T0).applied).toEqual([1, 2]);
     const tables = db
       .prepare(`SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
       .all()

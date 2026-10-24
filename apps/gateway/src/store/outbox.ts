@@ -41,6 +41,12 @@ export interface OutboxEntry {
   nextAttemptAt: string | null;
   lastError: string | null;
   cloudConfirmedAt: string | null;
+  /** Set only on a blocked entry (state 'failed', no retry time) awaiting operator requeue (migration 0002). */
+  blockedAt: string | null;
+  /** Fixed lowercase code; never record content, credentials or server messages. */
+  blockReason: string | null;
+  /** Lease owner that claimed this entry; set only while 'syncing' through the fenced API (syncLease.ts). */
+  claimedBy: string | null;
 }
 
 /**
@@ -68,8 +74,13 @@ function toEntry(row: Row): OutboxEntry {
     nextAttemptAt: strOrNull(row, 'next_attempt_at'),
     lastError: strOrNull(row, 'last_error'),
     cloudConfirmedAt: strOrNull(row, 'cloud_confirmed_at'),
+    blockedAt: strOrNull(row, 'blocked_at'),
+    blockReason: strOrNull(row, 'block_reason'),
+    claimedBy: strOrNull(row, 'claimed_by'),
   };
 }
+
+export { toEntry as toOutboxEntry };
 
 /** Adds the entity to the outbox once. Call inside the transaction that stores it. */
 export function enqueue(db: Database, entityType: OutboxEntityType, entityId: string, now: Date): void {
@@ -99,6 +110,11 @@ export function getEntry(db: Database, entityType: OutboxEntityType, entityId: s
  * Moves up to `limit` due entries (pending, or failed whose retry time has
  * come) to 'syncing', parents first. The returned entries are now owned by
  * the caller until marked synced/failed or recovered at startup.
+ *
+ * Single-process helper without a lease, parent gating or fairness. A cloud
+ * sync worker must use `claimEligible` (syncLease.ts) instead. Blocked
+ * entries are never selected (claiming one would also violate migration
+ * 0002's CHECK and abort the whole batch).
  */
 export function claimBatch(db: Database, limit: number, now: Date): OutboxEntry[] {
   const nowText = toCanonicalUtc(now);
@@ -107,7 +123,8 @@ export function claimBatch(db: Database, limit: number, now: Date): OutboxEntry[
     const rows = db
       .prepare(
         `SELECT * FROM sync_outbox
-         WHERE state = 'pending' OR (state = 'failed' AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
+         WHERE blocked_at IS NULL
+           AND (state = 'pending' OR (state = 'failed' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)))
          ORDER BY CASE entity_type ${orderCase} END, id
          LIMIT ?`,
       )
@@ -128,13 +145,17 @@ export function claimBatch(db: Database, limit: number, now: Date): OutboxEntry[
   });
 }
 
+/** Legacy (unleased) transitions only apply to entries claimed without an owner. */
 function requireSyncing(db: Database, id: number): void {
-  const row = db.prepare('SELECT state FROM sync_outbox WHERE id = ?').get(id);
+  const row = db.prepare('SELECT state, claimed_by FROM sync_outbox WHERE id = ?').get(id);
   if (row === undefined) {
     throw new OutboxStateError(`Outbox entry ${id} does not exist`);
   }
   if (str(row, 'state') !== 'syncing') {
     throw new OutboxStateError(`Outbox entry ${id} is '${str(row, 'state')}', not 'syncing'`);
+  }
+  if (strOrNull(row, 'claimed_by') !== null) {
+    throw new OutboxStateError(`Outbox entry ${id} is owned by a sync lease; use the fenced API`);
   }
 }
 
@@ -159,9 +180,15 @@ export function markFailed(db: Database, id: number, error: string, nextAttemptA
  * Startup recovery: entries left 'syncing' by a previous process have an
  * unknown outcome, so they return to 'pending'. Re-sending is safe because
  * cloud writes are idempotent on the shared stable IDs.
+ *
+ * Only unowned claims (claimed_by NULL) are recovered here. Entries claimed
+ * under a sync lease are recovered exclusively by an expired-lease takeover
+ * (`acquireLease`), so a live worker's claims can never be stolen.
  */
 export function recoverInterrupted(db: Database): number {
-  const result = db.prepare(`UPDATE sync_outbox SET state = 'pending' WHERE state = 'syncing'`).run();
+  const result = db
+    .prepare(`UPDATE sync_outbox SET state = 'pending' WHERE state = 'syncing' AND claimed_by IS NULL`)
+    .run();
   return Number(result.changes);
 }
 
