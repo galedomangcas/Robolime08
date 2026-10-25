@@ -10,6 +10,9 @@ import {
   MAX_JSON_BODY_BYTES,
   REQUEST_TIMEOUT_MS,
   isLoopbackAddress,
+  parseLanAddress,
+  type GatewayBindMode,
+  type NetworkInterfacesProvider,
 } from './config';
 import { serveStatic, type StaticSite } from './static';
 
@@ -25,11 +28,12 @@ import { serveStatic, type StaticSite } from './static';
  *
  * Browser-originated requests (decision D28): every request must carry a
  * `Host` naming this server's own loopback address and port (or
- * `localhost:<port>`), which defeats DNS-rebinding; and every POST must be
+ * `localhost:<port>`); in LAN mode (D36) only the exact bound
+ * `<IPv4>:<port>`. This defeats DNS-rebinding. Every POST must be
  * `application/json`, which browsers cannot send cross-origin without a CORS
  * preflight that this server never approves. Both checks run before the
- * request reaches the API. They complement, and do not replace, loopback-only
- * binding and the API's session authorization.
+ * request reaches the API. They complement, and do not replace, the bind
+ * policy and the API's session authorization.
  *
  * Logging: only method, path WITHOUT query string, status and duration. Never
  * headers (Authorization, Host), bodies (pairing codes) or tokens.
@@ -60,6 +64,16 @@ export interface HttpTimeouts {
 
 export interface GatewayHttpServerOptions {
   api: LocalApi;
+  /** Default `loopback`. `lan` (D36) re-validates `host` as an assigned RFC 1918 IPv4 address. */
+  mode?: GatewayBindMode;
+  /** Tests only: the interface list used to check that a LAN address is assigned. */
+  networkInterfaces?: NetworkInterfacesProvider;
+  /**
+   * Tests only: how the socket is opened (default `listenExactly`). Validation
+   * runs before it either way, and in LAN mode the reported address must equal
+   * the validated one. Not reachable from the environment, CLI or `startGateway`.
+   */
+  listen?: ListenFn;
   host: string;
   /** 0 = ephemeral (tests). */
   port: number;
@@ -72,8 +86,12 @@ export interface GatewayHttpServerOptions {
   staticSite?: StaticSite;
 }
 
+/** Opens `server` on `host:port` and resolves with the address actually bound. */
+export type ListenFn = (server: Server, port: number, host: string) => Promise<AddressInfo>;
+
 export interface RunningGatewayHttpServer {
   readonly server: Server;
+  readonly mode: GatewayBindMode;
   readonly host: string;
   readonly port: number;
   readonly url: string;
@@ -95,10 +113,13 @@ class BodyTooLargeError extends Error {
 
 /**
  * Host header values accepted by a server bound to `address:port`
- * (lower-case): the bound literal (IPv6 in brackets) and `localhost`, each
- * with the port. The port may be omitted only when it is 80.
+ * (lower-case). Loopback mode: the bound literal (IPv6 in brackets) and
+ * `localhost`, each with the port; the port may be omitted only when it is 80.
+ * LAN mode (D36): exactly `<IPv4>:<port>` — no `localhost`, no other names,
+ * and the port is required even on port 80.
  */
-export function allowedHostHeaders(address: string, port: number): ReadonlySet<string> {
+export function allowedHostHeaders(address: string, port: number, mode: GatewayBindMode = 'loopback'): ReadonlySet<string> {
+  if (mode === 'lan') return new Set([`${address}:${port}`.toLowerCase()]);
   const names = [address.includes(':') ? `[${address}]` : address, 'localhost'];
   const values = names.map((name) => `${name}:${port}`);
   if (port === 80) values.push(...names);
@@ -250,7 +271,7 @@ export function createRequestListener(options: GatewayHttpServerOptions, allowed
 
     if (!isAllowedHost(req.headers.host, allowedHosts())) {
       // The rejected Host value is not echoed or logged.
-      const response = apiErrorResponse('BAD_REQUEST', 'This gateway only answers requests addressed to its own loopback address.');
+      const response = apiErrorResponse('BAD_REQUEST', 'This gateway only answers requests addressed to its own address and port.');
       send(res, response, { Connection: 'close' });
       finish(response.status);
       return;
@@ -274,12 +295,26 @@ export function createRequestListener(options: GatewayHttpServerOptions, allowed
 }
 
 /**
- * Starts the server and resolves once it is listening. Refuses non-loopback
- * hosts as defence in depth (configuration is validated in `config.ts` too).
+ * Starts the server and resolves once it is listening on exactly
+ * `options.host`. As defence in depth (configuration is validated in
+ * `config.ts` too), loopback mode refuses any non-loopback host, and LAN mode
+ * (D36) re-validates the host as an assigned RFC 1918 IPv4 literal. A failed
+ * `listen` (e.g. EADDRNOTAVAIL, EADDRINUSE) rejects; there is never a retry on
+ * another address.
  */
 export function startGatewayHttpServer(options: GatewayHttpServerOptions): Promise<RunningGatewayHttpServer> {
-  if (!isLoopbackAddress(options.host)) {
-    return Promise.reject(new Error('The gateway HTTP server only binds to loopback addresses in this build.'));
+  const mode: GatewayBindMode = options.mode ?? 'loopback';
+  if (mode === 'loopback' && !isLoopbackAddress(options.host)) {
+    return Promise.reject(
+      new Error('The gateway HTTP server binds non-loopback addresses only in LAN mode (decision D36).'),
+    );
+  }
+  if (mode === 'lan') {
+    try {
+      parseLanAddress(options.host, options.networkInterfaces);
+    } catch (error) {
+      return Promise.reject(error);
+    }
   }
   const timeouts: HttpTimeouts = {
     headersMs: HEADERS_TIMEOUT_MS,
@@ -303,19 +338,19 @@ export function startGatewayHttpServer(options: GatewayHttpServerOptions): Promi
     createRequestListener(options, () => allowedHosts),
   );
 
-  return new Promise((resolve, reject) => {
-    const onError = (error: Error) => {
-      server.close();
-      reject(error);
-    };
-    server.once('error', onError);
-    server.listen(options.port, options.host, () => {
-      server.off('error', onError);
-      const address = server.address() as AddressInfo;
-      allowedHosts = allowedHostHeaders(address.address, address.port);
+  const listen = options.listen ?? listenExactly;
+  return listen(server, options.port, options.host).then(
+    (address) => {
+      // Fail closed if the socket is not on the validated LAN address (never serve elsewhere).
+      if (mode === 'lan' && address.address !== options.host) {
+        server.close();
+        throw new Error('The gateway HTTP server is not bound to the validated LAN address; it was stopped.');
+      }
+      allowedHosts = allowedHostHeaders(address.address, address.port, mode);
       const hostForUrl = address.family === 'IPv6' ? `[${address.address}]` : address.address;
-      resolve({
+      return {
         server,
+        mode,
         host: address.address,
         port: address.port,
         url: `http://${hostForUrl}:${address.port}`,
@@ -324,7 +359,21 @@ export function startGatewayHttpServer(options: GatewayHttpServerOptions): Promi
             server.close((error) => (error ? fail(error) : done()));
             server.closeIdleConnections();
           }),
-      });
+      };
+    },
+    (error: unknown) => {
+      server.close();
+      throw error;
+    },
+  );
+}
+
+/** Listens on exactly `host:port` and reports the bound address. Rejects on any listen error. */
+export const listenExactly: ListenFn = (server, port, host) =>
+  new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, () => {
+      server.off('error', reject);
+      resolve(server.address() as AddressInfo);
     });
   });
-}

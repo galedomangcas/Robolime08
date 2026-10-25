@@ -1,5 +1,6 @@
 import { API_V1_ROUTES, type PairingResponse } from '@robolime/shared';
 import { existsSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { DatabaseMissingError, initDatabase, openExistingDatabase } from '../db/init';
@@ -65,8 +66,49 @@ describe('startGateway', () => {
 
   it('serves loopback only and reports its URL', async () => {
     const gateway = await serve(fieldDb());
+    expect(gateway.mode).toBe('loopback');
     expect(gateway.host).toBe('127.0.0.1');
     expect(gateway.url).toBe(`http://127.0.0.1:${gateway.port}`);
+  });
+
+  it('LAN mode (D36): invalid LAN configuration fails before the database is touched (no fallback)', async () => {
+    tmp = tempDir();
+    const missing = tmp.path('never-created.sqlite');
+    const someLan = (): Record<string, { address: string; family: string; internal: boolean }[]> => ({
+      wlan0: [{ address: '192.168.137.1', family: 'IPv4', internal: false }],
+    });
+    for (const attempt of [
+      { env: { GATEWAY_LAN_MODE: 'on' } }, // no address
+      { env: { GATEWAY_LAN_MODE: 'maybe', GATEWAY_HOST: '192.168.137.1' } }, // invalid mode value
+      { env: { GATEWAY_LAN_MODE: 'on', GATEWAY_HOST: '8.8.8.8' } }, // public
+      { env: { GATEWAY_LAN_MODE: 'on', GATEWAY_HOST: '10.9.8.7' } }, // private but unassigned
+      { env: { GATEWAY_HOST: '192.168.137.1' } }, // private without the opt-in
+      { env: {}, lan: true }, // --lan without an address
+    ]) {
+      await expect(
+        startGateway({ dbPath: missing, portOverride: 0, networkInterfaces: someLan, ...attempt }),
+      ).rejects.toThrow(GatewayConfigError);
+    }
+    expect(existsSync(missing)).toBe(false);
+  });
+
+  it('LAN mode (D36): a failed bind closes the database and leaves nothing listening', async (ctx) => {
+    const address = ['10.255.255.254', '172.31.255.254', '192.168.255.254'].find(
+      (a) => !Object.values(networkInterfaces()).flat().some((e) => e?.address === a),
+    );
+    if (address === undefined) {
+      ctx.skip(); // every candidate is really assigned here; cannot provoke EADDRNOTAVAIL safely
+      return;
+    }
+    const file = fieldDb();
+    const claimAssigned = () => ({ wlan0: [{ address, family: 'IPv4', internal: false }] });
+    await expect(
+      startGateway({ dbPath: file, env: { GATEWAY_LAN_MODE: 'on', GATEWAY_HOST: address }, portOverride: 0, networkInterfaces: claimAssigned }),
+    ).rejects.toMatchObject({ code: 'EADDRNOTAVAIL' });
+    // The database was released (the temp-dir cleanup would fail on Windows otherwise) and is intact.
+    const db = openExistingDatabase(file);
+    expect(count(db, 'readings')).toBe(1);
+    db.close();
   });
 
   it('keeps existing data and pairing sessions across a restart (no reset, no reseed)', async () => {

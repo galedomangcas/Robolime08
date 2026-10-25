@@ -21,9 +21,9 @@ worker has been tested against an in-process fake PostgREST and, in the
 opt-in A2 run, against a throwaway local PostgreSQL 17.5 + standalone
 PostgREST 16.4 (`cloud-mirror.md`); **not** against the official Supabase
 stack or the hosted project.
-**Not built yet:** LAN binding (required for Phase 4; D36 records the opt-in
-policy, approved for documentation only; implementation needs separate
-authorisation); the real LoRa byte codec (spec unsigned) and a `serialport`
+Opt-in LAN binding (D36) is implemented and covered by automated tests only;
+it has not been run on a phone or a real field network.
+**Not built yet:** the real LoRa byte codec (spec unsigned) and a `serialport`
 adapter for the runtime (moved to build-order item 8, D34). Push-based live updates are not planned for
 Phase 4: status refresh uses the app's 10 s polling (D34).
 
@@ -204,11 +204,10 @@ multi-user authentication and does not identify a person.
 - Failed pairing attempts are rate limited per client address (see
   "Pairing-attempt rate limiting" below).
 - Known limits: plain HTTP on the field LAN (no TLS) means a device on the
-  same Wi-Fi could observe tokens; the HTTP server is still loopback-only.
-  D36 (proposed) accepts that plain-HTTP risk for this semester on a trusted,
-  password-protected field network only (never the public internet), but LAN
-  binding is not implemented. Anyone with the laptop's disk can read the
-  stored data.
+  same Wi-Fi could observe tokens. The HTTP server is loopback-only unless
+  LAN mode is explicitly enabled; D36 accepts that plain-HTTP risk for this
+  semester on a trusted, password-protected field network only (never the
+  public internet). Anyone with the laptop's disk can read the stored data.
 
 ### Pairing-attempt rate limiting (decision D30)
 
@@ -250,9 +249,8 @@ multi-user authentication and does not identify a person.
   lock the others out for up to 15 minutes. Conversely, an attacker who can
   use many addresses on the field Wi-Fi gets 5 attempts per address; the
   60-bit code and the scrypt cost remain the main protection.
-- **LAN binding remains disabled.** Rate limiting was the documented
-  prerequisite. D36 records the LAN policy and keeps this rate limit
-  unchanged; implementing it needs separate authorisation.
+- **LAN mode (D36) keeps this rate limit unchanged.** It is off by default;
+  in LAN mode the counter is keyed on each phone's real socket address.
 
 ## Local API contract (v1)
 
@@ -299,16 +297,28 @@ does, and stops cleanly on Ctrl+C (HTTP server first, then the database).
 
 | Setting | Source (highest first) | Default | Accepted |
 |---|---|---|---|
-| Host | `--host`, `GATEWAY_HOST` | `127.0.0.1` | **loopback IP literals only** (`127.0.0.0/8`, `::1`) |
+| Host | `--host`, `GATEWAY_HOST` | `127.0.0.1` | loopback IP literals (`127.0.0.0/8`, `::1`); in LAN mode only an assigned RFC 1918 IPv4 literal |
+| LAN mode (D36) | `--lan`, `GATEWAY_LAN_MODE` (`on`/`off`) | off | `on`/`off`, case-insensitive; anything else refuses to start |
 | Port | `--port`, `GATEWAY_PORT` | `8780` | integer 1–65535 |
 | Web export | `--web-dir`, `GATEWAY_WEB_DIR` | none (static serving off) | folder from `npm run build:web` (see below) |
 
-- **Loopback only (decision D28).** `0.0.0.0`, `::`, LAN addresses and host
-  names are refused with an error — never silently replaced. Phones and
-  tablets on the field Wi-Fi therefore **cannot** reach this server yet.
-  D36 records the opt-in LAN policy (explicit, assigned RFC 1918 IPv4 address, fail closed,
-  exact-IP Host check); it is approved for documentation only and not
-  implemented.
+- **Loopback by default (decision D28).** Without LAN mode, `0.0.0.0`, `::`,
+  LAN addresses and host names are refused with an error — never silently
+  replaced.
+- **LAN mode (decision D36, opt-in).** `--lan` or `GATEWAY_LAN_MODE=on` plus
+  `--host`/`GATEWAY_HOST` set to this computer's own RFC 1918 IPv4 address
+  (10.x, 172.16–31.x, 192.168.x) that is assigned to an interface right now.
+  Wildcard, loopback, public, link-local, CGNAT, multicast, IPv6, host names
+  and unassigned addresses refuse to start; a failed bind (e.g.
+  `EADDRNOTAVAIL`) also stops start-up. There is never a fallback to another
+  address and no automatic rebind if the address changes. Only that one
+  address is bound, and requests must use exactly
+  `http://<that address>:<port>` (`localhost` is rejected). Plain HTTP:
+  trusted, password-protected field network only; the operator scopes a
+  Windows firewall rule to the Private profile, the port and the local subnet
+  and removes it afterwards; the gateway never changes firewall settings.
+  Tested automatically only; the opt-in real-socket test
+  (`ROBOLIME_LAN_SOCKET_TEST=1`) and the physical phone test have not been run.
 - Only `GET` and `POST` under `/api/v1/`; other methods get `405` (with
   `Allow: GET, POST`). Every path under `/api` (including unknown versions)
   goes to the API and gets its JSON `404` if unknown. Other paths get the

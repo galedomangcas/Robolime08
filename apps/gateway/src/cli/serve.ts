@@ -1,17 +1,26 @@
 /**
- * Serves the local API over HTTP on LOOPBACK ONLY (Phase 4, milestone 1).
+ * Serves the local API over HTTP: LOOPBACK by default (Phase 4, milestone 1).
  *   npm run serve -w @robolime/gateway -- --db <file> [--host 127.0.0.1] [--port 8780] [--web-dir <export>]
- * Defaults: GATEWAY_HOST / GATEWAY_PORT, else 127.0.0.1:8780. The exported web
- * app is served at / only with --web-dir or GATEWAY_WEB_DIR (decision D33).
- * LAN binding, the serial bridge and cloud sync are NOT started by this command.
- * Stop with Ctrl+C.
+ *   npm run serve -w @robolime/gateway -- --db <file> --lan --host <private IPv4>   # LAN mode (D36)
+ * Defaults: GATEWAY_HOST / GATEWAY_PORT, else 127.0.0.1:8780. LAN mode needs
+ * --lan or GATEWAY_LAN_MODE=on AND an RFC 1918 IPv4 address assigned to this
+ * computer; otherwise it refuses to start (no fallback). The exported web app
+ * is served at / only with --web-dir or GATEWAY_WEB_DIR (decision D33).
+ * The serial bridge and cloud sync are NOT started by this command. Firewall
+ * settings are never changed. Stop with Ctrl+C.
  */
 import { startGateway } from '../http/serve';
 import { fail, parseCli, resolveDbPath } from './args';
 
 const SHUTDOWN_GRACE_MS = 5_000;
 
-const args = parseCli({ db: { type: 'string' }, host: { type: 'string' }, port: { type: 'string' }, 'web-dir': { type: 'string' } });
+const args = parseCli({
+  db: { type: 'string' },
+  host: { type: 'string' },
+  port: { type: 'string' },
+  'web-dir': { type: 'string' },
+  lan: { type: 'boolean' },
+});
 const dbPath = resolveDbPath(args.db);
 
 let gateway;
@@ -22,6 +31,7 @@ try {
     host: args.host,
     port: args.port,
     webDir: args['web-dir'],
+    lan: args.lan, // undefined when the flag is absent: GATEWAY_LAN_MODE decides
     onRequest: ({ method, path, status, durationMs }) =>
       process.stdout.write(`${new Date().toISOString()} ${method} ${path} ${status} ${durationMs}ms\n`),
     onError: ({ errorName, method, path }) =>
@@ -31,21 +41,35 @@ try {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   if (code === 'EADDRINUSE') fail('That port is already in use. Choose another with --port or GATEWAY_PORT.');
   if (code === 'EACCES') fail('Not permitted to listen on that port. Choose a port above 1023.');
+  if (code === 'EADDRNOTAVAIL') {
+    fail('That address is not available on this computer (check the Wi-Fi or hotspot address). Nothing was started.');
+  }
   fail(error instanceof Error ? error.message : String(error));
 }
 
 const running = gateway;
-process.stdout.write(
-  [
-    `RoboLime gateway API listening on ${running.url} (loopback only).`,
-    running.servesWebApp
-      ? `Web app: open ${running.url}/ in a browser on this computer.`
-      : 'Web app not served (use --web-dir or GATEWAY_WEB_DIR to enable it).',
-    'LAN access, the serial bridge and cloud sync are not enabled by this command.',
-    'Press Ctrl+C to stop.',
-    '',
-  ].join('\n'),
-);
+const banner =
+  running.mode === 'lan'
+    ? [
+        `RoboLime gateway API listening on ${running.url} (LAN mode, plain HTTP).`,
+        'WARNING: LAN mode uses plain, unencrypted HTTP. Use it only on a trusted, password-protected',
+        'field Wi-Fi or hotspot - never a public network or the internet. Any device on the same',
+        'network can observe pairing codes, session tokens and data.',
+        running.servesWebApp
+          ? `Web app: open ${running.url}/ (use this LAN address; localhost is not accepted in LAN mode).`
+          : `Web app not served (use --web-dir or GATEWAY_WEB_DIR). API clients must use ${running.url}.`,
+        `Firewall: allow inbound TCP ${running.port} only for the Private profile and the local subnet,`,
+        'and remove the rule after use. This gateway never changes firewall settings.',
+        'The serial bridge and cloud sync are not enabled by this command.',
+      ]
+    : [
+        `RoboLime gateway API listening on ${running.url} (loopback only).`,
+        running.servesWebApp
+          ? `Web app: open ${running.url}/ in a browser on this computer.`
+          : 'Web app not served (use --web-dir or GATEWAY_WEB_DIR to enable it).',
+        'LAN access (--lan, decision D36), the serial bridge and cloud sync are not enabled by this command.',
+      ];
+process.stdout.write([...banner, 'Press Ctrl+C to stop.', ''].join('\n'));
 
 let stopping = false;
 function shutdown(signal: string): void {

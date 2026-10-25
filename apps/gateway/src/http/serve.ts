@@ -3,7 +3,7 @@ import type { Database } from '../db/connection';
 import { openExistingDatabase } from '../db/init';
 import { migrate } from '../db/migrate';
 import type { Clock } from '../db/time';
-import { resolveHttpConfig } from './config';
+import { resolveHttpConfig, type GatewayBindMode, type NetworkInterfacesProvider } from './config';
 import { startGatewayHttpServer, type HttpErrorLog, type HttpRequestLog } from './server';
 import { loadStaticSite } from './static';
 
@@ -15,6 +15,10 @@ export interface ServeOptions {
   port?: string;
   /** Exported web app folder (--web-dir); overrides GATEWAY_WEB_DIR. */
   webDir?: string;
+  /** `--lan`: true enables LAN mode (D36); absent defers to GATEWAY_LAN_MODE. */
+  lan?: boolean;
+  /** Tests only: interface list for the LAN-address assignment check. */
+  networkInterfaces?: NetworkInterfacesProvider;
   /** Tests only: ephemeral port, bypassing the 1–65535 operator range. */
   portOverride?: number;
   clock?: Clock;
@@ -23,6 +27,8 @@ export interface ServeOptions {
 }
 
 export interface RunningGateway {
+  /** `loopback` (default) or `lan` (D36 opt-in). */
+  readonly mode: GatewayBindMode;
   readonly url: string;
   readonly host: string;
   readonly port: number;
@@ -42,7 +48,11 @@ export interface RunningGateway {
  * Pairing and field-selection requests write through the normal API.
  */
 export async function startGateway(options: ServeOptions): Promise<RunningGateway> {
-  const config = resolveHttpConfig(options.env, { host: options.host, port: options.port, webDir: options.webDir });
+  const config = resolveHttpConfig(
+    options.env,
+    { host: options.host, port: options.port, webDir: options.webDir, lan: options.lan },
+    { networkInterfaces: options.networkInterfaces },
+  );
   // Loaded before the database is opened, so a bad export fails fast.
   const staticSite = config.webDir === null ? undefined : loadStaticSite(config.webDir);
 
@@ -52,6 +62,8 @@ export async function startGateway(options: ServeOptions): Promise<RunningGatewa
     const api = createLocalApi({ db, clock: options.clock });
     const http = await startGatewayHttpServer({
       api,
+      mode: config.mode,
+      networkInterfaces: options.networkInterfaces,
       host: config.host,
       port: options.portOverride ?? config.port,
       onRequest: options.onRequest,
@@ -61,6 +73,7 @@ export async function startGateway(options: ServeOptions): Promise<RunningGatewa
 
     let closing: Promise<void> | null = null;
     return {
+      mode: http.mode,
       url: http.url,
       host: http.host,
       port: http.port,

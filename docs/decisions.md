@@ -303,9 +303,9 @@ accepted, and wildcard or LAN addresses are refused with an error instead of
 being silently replaced. Pairing-attempt rate limiting (OPEN_ITEMS #16) must
 exist before LAN binding is allowed; until then the field Wi-Fi cannot reach
 the API, which is intentional. Tested on loopback only; no LAN, phone or
-hardware testing has been done. (Later status: D36 records an opt-in LAN bind
-policy that would amend this; it is approved for documentation only and not
-implemented, so this loopback-only policy still applies.)
+hardware testing has been done. (Later status: D36 amends this with an opt-in LAN
+bind policy, now implemented with automated tests; loopback remains the
+default, and LAN acceptance needs the D36 §10 tests.)
 
 **Browser-originated requests (M1 review fix):** loopback binding alone does
 not stop a web page on the same laptop from reaching the server. Every
@@ -375,6 +375,9 @@ API change, firmware change or `CLAUDE.md` modification.**
 **Approved policy (project lead):** at most 5 failed pairing attempts per
 client IP address within 15 minutes; counters in memory only, reset on
 gateway restart; LAN binding stays out of scope and unauthorised.
+
+(Later status: D36 subsequently authorised and implemented opt-in LAN binding;
+D30's rate-limit requirements above are unchanged and apply in LAN mode too.)
 
 **Options considered for the key:** (1) one gateway-wide counter: simplest,
 but anyone could lock the real owner out; (2) **per client IP** (chosen):
@@ -646,8 +649,8 @@ LAN binding stays prohibited until a new explicit decision authorises it: D28
 sets the loopback-only bind policy and makes pairing rate limiting a
 prerequisite (now met by D30), and D30 records LAN binding as out of scope
 and unauthorised. D34 does not authorise it. (Later status: D36 records the
-LAN binding policy and plain-HTTP threat model; it is approved for
-documentation only and not implemented.)
+LAN binding policy and plain-HTTP threat model and is implemented with
+automated tests; the physical LAN test is still outstanding.)
 
 **Exit checklist:** `docs/architecture.md`, "Phase 4 exit checklist". Its
 criteria and the closing rule are **PROPOSED** and need the project lead's
@@ -753,11 +756,27 @@ oldest first.
 
 ## D36 — Opt-in LAN binding for the local HTTP API (Phase 4, checklist row 5)
 
-**Status: PROPOSED — approved for documentation, NOT IMPLEMENTED.** The project
-lead approved this decision text for the record. That is not authorisation to
-implement it: the gateway stays loopback-only until a separate implementation
-authorisation is given and the acceptance criteria below pass. Amends D28's
-bind policy only; D30 is unchanged.
+**Status: APPROVED; implemented in the gateway with automated tests
+(uncommitted, under review). LAN acceptance NOT established:** the opt-in
+real-socket test and the physical phone-on-Wi-Fi test (§10) have not been run.
+Amends D28's bind policy only; D30 is unchanged. Loopback remains the default.
+
+**Implementation (approved choices C1–C6):** `GATEWAY_LAN_MODE=on|off`
+(case-insensitive; any other value refuses to start) or `npm run serve --
+--lan` (an absent flag defers to the environment); `GATEWAY_HOST`/`--host`
+carries the address. One listener on that address only (no second loopback
+listener). The Host allow-list is exactly `<IPv4>:<port>`, also on port 80.
+`apps/gateway/src/http/config.ts` validates the address (RFC 1918 classifier,
+assignment check against `os.networkInterfaces()`, injectable for tests);
+`server.ts` re-validates it before `listen` and never retries elsewhere;
+`cli/serve.ts` prints the plain-HTTP/trusted-network warning, the LAN-URL
+requirement for browsers and the firewall reminder. Normal tests use injected
+interfaces and the LAN Host policy on loopback sockets; the successful LAN
+start is tested through a test-only `listen` hook that opens a loopback socket
+(validation still runs first, and the server stops if the bound address is not
+the validated one). A real bind on a private interface runs only with
+`ROBOLIME_LAN_SOCKET_TEST=1` (it can expose the test server to the network and
+trigger a Windows Firewall prompt).
 
 **Context:** `CLAUDE.md` §3 requires the gateway API and the gateway-served web
 app to be reachable from a phone on the field Wi-Fi without internet, bound to
@@ -773,8 +792,10 @@ today.
 **2. Explicit opt-in.** LAN access requires **both** an explicit LAN-mode
 setting **and** an explicit bind address that is an IPv4 literal inside
 RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and assigned to a
-local network interface at start-up. Either one alone is refused. Setting names
-(e.g. `GATEWAY_LAN_MODE`, `--lan`) are proposals, fixed at implementation.
+local network interface at start-up. Either one alone is refused. Implemented
+as `GATEWAY_LAN_MODE=on|off` (case-insensitive; any other value, even with
+`--lan`, refuses to start) or the `--lan` flag (an absent flag defers to the
+environment), with the address in `GATEWAY_HOST`/`--host`.
 
 **3. Fail closed.** The gateway refuses to start, with an error that names the
 problem and echoes no other setting, when LAN mode is on and the address is
@@ -838,8 +859,10 @@ port, rebinding names and malformed or missing `Host`; over a real socket on a
 private address, unpaired, invalid-token, robot-scope and D30 behaviour;
 unchanged 405/413/415/408/500, no CORS, secret-free logs; works without
 internet and survives a restart; all suites, typecheck and lint green with the
-gates unchanged. Real-socket LAN tests skip visibly when the test machine has
-no private interface. *Physical test* (build-order item 8, OPEN_ITEMS #6): an
+gates unchanged. The real-socket test on a private interface is **opt-in**
+(`ROBOLIME_LAN_SOCKET_TEST=1`; it can expose the test server to the network and
+trigger a Windows Firewall prompt), skips visibly otherwise or when no private
+interface exists, and has **not** been run. *Physical test* (build-order item 8, OPEN_ITEMS #6): an
 Android phone on the laptop hotspot or field access point with no internet,
 the firewall rule, client isolation, pairing and status over the LAN IP, the
 served web app, unreachability from other networks, and data surviving a
@@ -847,4 +870,5 @@ restart. Automated tests alone do not establish LAN acceptance.
 
 **Relationship to other decisions:** amends D28's bind policy and its Host
 allow-list in LAN mode; keeps all other D28 controls and all of D30; records
-the policy D34 left open. Checklist row 5 stays **Not implemented**.
+the policy D34 left open. Checklist row 5: **Partly verified** (implemented;
+automated tests only; opt-in real-socket and physical tests not run).

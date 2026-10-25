@@ -1,6 +1,7 @@
 import { API_V1_ROUTES, type ApiErrorBody, type PairingResponse, type RunsResponse } from '@robolime/shared';
-import { request } from 'node:http';
-import { connect } from 'node:net';
+import { createServer, request, type Server } from 'node:http';
+import { connect, type AddressInfo } from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createLocalApi, type LocalApi } from '../api/localApi';
@@ -12,15 +13,21 @@ import { getRobotBySourceId, provisionRobot } from '../store/robots';
 import { T0, TEST_ONLY_OTHER_PAIRING_CODE, TEST_ONLY_PAIRING_CODE, testReading } from '../test/helpers';
 import {
   CONNECTIONS_CHECK_INTERVAL_MS,
+  GatewayConfigError,
   HEADERS_TIMEOUT_MS,
+  isAssignedLocalIpv4,
+  isRfc1918Ipv4,
   KEEP_ALIVE_TIMEOUT_MS,
   MAX_JSON_BODY_BYTES,
   REQUEST_TIMEOUT_MS,
+  type NetworkInterfacesProvider,
 } from './config';
 import {
   allowedHostHeaders,
+  createRequestListener,
   isJsonContentType,
   startGatewayHttpServer,
+  type ListenFn,
   type HttpErrorLog,
   type HttpRequestLog,
   type RunningGatewayHttpServer,
@@ -726,5 +733,304 @@ describe('gateway HTTP server: connection timeouts are actually enforced', () =>
     const res = await raw(server, { method: 'GET', path: API_V1_ROUTES.session });
     expect(res.status).toBe(401);
     expect(code(res)).toBe('UNPAIRED');
+  });
+});
+
+// ------------------------------------------------------------ LAN mode (D36)
+
+const LAN = '192.168.137.1';
+
+/** Fake interface list (no real network access). */
+const interfacesWith =
+  (...addresses: string[]): NetworkInterfacesProvider =>
+  () => ({ wlan0: addresses.map((address) => ({ address, family: 'IPv4', internal: false })) });
+
+/** A private address that this machine really does NOT have (so a real bind attempt on it must fail). */
+function unassignedPrivateAddress(): string | null {
+  return ['10.255.255.254', '172.31.255.254', '192.168.255.254'].find((a) => !isAssignedLocalIpv4(a)) ?? null;
+}
+
+/** Resolves with 'connected' or the connection error code for loopback `port`. */
+function probeLoopback(port: number): Promise<string> {
+  return new Promise((resolve) => {
+    const socket = connect(port, '127.0.0.1');
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve('connected');
+    });
+    socket.once('error', (error: NodeJS.ErrnoException) => resolve(error.code ?? 'error'));
+  });
+}
+
+/**
+ * The LAN-mode request policy on a SAFE loopback socket: the real request
+ * listener with the LAN-mode Host allow-list for `LAN:<port>`, listening on
+ * 127.0.0.1 only, so nothing is exposed to the network. Requests name the LAN
+ * address in `Host` explicitly.
+ */
+const lanPolicyServers: Server[] = [];
+afterEach(async () => {
+  await Promise.all(lanPolicyServers.splice(0).map((s) => new Promise<void>((done) => s.close(() => done()))));
+});
+
+async function startLanPolicyOnLoopback(api: LocalApi, logs: { req: HttpRequestLog[] } = { req: [] }) {
+  let port = 0;
+  const server = createServer(
+    createRequestListener({ api, host: LAN, port: 0, onRequest: (e) => logs.req.push(e) }, () => allowedHostHeaders(LAN, port, 'lan')),
+  );
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  lanPolicyServers.push(server);
+  port = (server.address() as AddressInfo).port;
+  const handle = { server, mode: 'lan', host: '127.0.0.1', port, url: `http://${LAN}:${port}`, close: async () => undefined };
+  return { handle: handle as RunningGatewayHttpServer, lanHost: `${LAN}:${port}`, port };
+}
+
+describe('LAN mode (D36): bind policy, defence in depth and fail-closed binding', () => {
+  it('builds an exact <IPv4>:<port> Host allow-list (no localhost, port required even on 80)', () => {
+    expect([...allowedHostHeaders(LAN, 8780, 'lan')]).toEqual([`${LAN}:8780`]);
+    expect([...allowedHostHeaders(LAN, 80, 'lan')]).toEqual([`${LAN}:80`]);
+    // Loopback mode is unchanged.
+    expect([...allowedHostHeaders('127.0.0.1', 8780)].sort()).toEqual(['127.0.0.1:8780', 'localhost:8780']);
+  });
+
+  it.each(['127.0.0.1', '0.0.0.0', '::', '8.8.8.8', '169.254.1.1', '100.64.0.1', 'fe80::1', 'localhost'])(
+    'refuses a forged LAN plan for %s before listening',
+    async (host) => {
+      await expect(
+        startGatewayHttpServer({ api: fixture().api, mode: 'lan', host, port: 0, networkInterfaces: interfacesWith(host) }),
+      ).rejects.toThrow(GatewayConfigError);
+    },
+  );
+
+  it('refuses a private address that is not assigned, before listening', async () => {
+    await expect(
+      startGatewayHttpServer({ api: fixture().api, mode: 'lan', host: '10.9.8.7', port: 0, networkInterfaces: interfacesWith() }),
+    ).rejects.toThrow(/not assigned/);
+  });
+
+  it('still refuses a private address without LAN mode (the default stays loopback-only)', async () => {
+    await expect(startGatewayHttpServer({ api: fixture().api, host: LAN, port: 0 })).rejects.toThrow(/LAN mode/);
+  });
+
+  it('fails closed when the bind itself fails, with no fallback to loopback or any other address', async (ctx) => {
+    const address = unassignedPrivateAddress();
+    if (address === null) {
+      ctx.skip(); // every candidate address is really assigned here; cannot provoke EADDRNOTAVAIL safely
+      return;
+    }
+    // A port that is free on loopback right now.
+    const probe = createServer();
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+    const port = (probe.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+    // The fake interface list claims the address is assigned, so validation passes and the real
+    // listen() is attempted on an address this machine does not have: it must fail.
+    const attempt = startGatewayHttpServer({ api: fixture().api, mode: 'lan', host: address, port, networkInterfaces: interfacesWith(address) });
+    await expect(attempt).rejects.toMatchObject({ code: 'EADDRNOTAVAIL' });
+
+    // Nothing was bound on loopback (or anywhere else) as a fallback.
+    expect(await probeLoopback(port)).toBe('ECONNREFUSED');
+  });
+});
+
+/**
+ * Successful LAN start WITHOUT a real LAN bind: the injected `listen` opens a
+ * loopback socket and reports the validated LAN address as bound. Everything
+ * else (validation, mode, Host allow-list, URL) is the real start path. This
+ * does NOT replace the opt-in real private-interface test.
+ */
+const loopbackReportingAs =
+  (reported: string): ListenFn =>
+  (server, _port, _host) =>
+    new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => resolve({ ...(server.address() as AddressInfo), address: reported }));
+    });
+
+describe('LAN mode (D36): successful start path (injected listen, no real LAN bind)', () => {
+  it('reports mode lan, the LAN URL, and enforces the exact LAN Host on the real request server', async () => {
+    const { api, calls } = counted(fixture().api);
+    running = await startGatewayHttpServer({
+      api,
+      mode: 'lan',
+      host: LAN,
+      port: 0,
+      networkInterfaces: interfacesWith(LAN),
+      listen: loopbackReportingAs(LAN),
+    });
+    expect(running.mode).toBe('lan');
+    expect(running.host).toBe(LAN);
+    expect(running.url).toBe(`http://${LAN}:${running.port}`);
+    const target = { ...running, host: '127.0.0.1' } as RunningGatewayHttpServer; // the real socket
+    const p = running.port;
+    expect((await raw(target, { method: 'GET', path: API_V1_ROUTES.session, headers: { Host: `${LAN}:${p}` } })).status).toBe(401);
+    for (const host of [`localhost:${p}`, `127.0.0.1:${p}`, LAN, `${LAN}:${p + 1}`, `[::1]:${p}`]) {
+      expect((await raw(target, { method: 'GET', path: API_V1_ROUTES.session, headers: { Host: host } })).status, host).toBe(400);
+    }
+    expect(calls()).toBe(1);
+  });
+
+  it('still validates before listening when listen is injected', async () => {
+    let listened = 0;
+    const spy: ListenFn = async (server, port, host) => {
+      listened += 1;
+      return loopbackReportingAs(host)(server, port, host);
+    };
+    for (const host of ['8.8.8.8', '127.0.0.1', '10.9.8.7']) {
+      await expect(
+        startGatewayHttpServer({ api: fixture().api, mode: 'lan', host, port: 0, networkInterfaces: interfacesWith(), listen: spy }),
+      ).rejects.toThrow(GatewayConfigError);
+    }
+    expect(listened).toBe(0);
+  });
+
+  it('fails closed and stops listening if the bound address is not the validated LAN address', async () => {
+    let opened: Server | undefined;
+    const wrong: ListenFn = (server, port, host) => {
+      opened = server;
+      return loopbackReportingAs('192.168.137.99')(server, port, host);
+    };
+    await expect(
+      startGatewayHttpServer({ api: fixture().api, mode: 'lan', host: LAN, port: 0, networkInterfaces: interfacesWith(LAN), listen: wrong }),
+    ).rejects.toThrow(/not bound to the validated LAN address/);
+    expect(opened?.listening).toBe(false);
+  });
+});
+
+describe('LAN mode (D36): request security on a safe loopback socket with the LAN Host policy', () => {
+  it('accepts only the exact LAN <IPv4>:<port> Host; everything else gets 400 before the API, without echo', async () => {
+    const { api, calls } = counted(fixture().api);
+    const { handle, lanHost, port } = await startLanPolicyOnLoopback(api);
+    const ok = await raw(handle, { method: 'GET', path: API_V1_ROUTES.session, headers: { Host: lanHost } });
+    expect(ok.status).toBe(401); // reached the API: unpaired
+    for (const host of [
+      `localhost:${port}`,
+      `127.0.0.1:${port}`,
+      LAN, // port missing
+      `${LAN}:${port + 1}`,
+      `192.168.137.2:${port}`,
+      `evil.example:${port}`,
+      `${LAN}.:${port}`,
+      `${LAN}:${port}, ${LAN}:${port}`,
+      `user@${LAN}:${port}`,
+      `${LAN}:0${port}`,
+    ]) {
+      const res = await raw(handle, { method: 'GET', path: API_V1_ROUTES.session, headers: { Host: host } });
+      expect(res.status, host).toBe(400);
+      expect(res.text, host).not.toContain('evil.example');
+    }
+    // node:http's own default Host (the loopback literal it connected to) is rejected too.
+    const defaultHost = await raw(handle, { method: 'GET', path: API_V1_ROUTES.session });
+    expect(defaultHost.status).toBe(400);
+    // No Host at all (HTTP/1.0).
+    const noHost = await rawSocket(handle, `GET ${API_V1_ROUTES.session} HTTP/1.0\r\n\r\n`);
+    expect(noHost.status).toBe(400);
+    expect(calls()).toBe(1);
+  });
+
+  it('keeps pairing, session authorization and robot scope unchanged', async () => {
+    const { api, verificationRun, otherRun, dosingRun } = fixture();
+    const { handle, lanHost } = await startLanPolicyOnLoopback(api);
+    const json = { Host: lanHost, 'Content-Type': 'application/json' };
+    const wrong = await raw(handle, { method: 'POST', path: API_V1_ROUTES.pairing, headers: json, body: pairingBody('WRNG-WRNG-WRNG') });
+    expect([wrong.status, code(wrong)]).toEqual([401, 'INVALID_PAIRING_CODE']);
+    const paired = await raw(handle, { method: 'POST', path: API_V1_ROUTES.pairing, headers: json, body: pairingBody(TEST_ONLY_PAIRING_CODE) });
+    expect(paired.status).toBe(201);
+    const token = (paired.json as PairingResponse).sessionToken;
+    const auth = { Host: lanHost, ...bearer(token) };
+    const runs = await raw(handle, { method: 'GET', path: API_V1_ROUTES.runs, headers: auth });
+    expect((runs.json as RunsResponse).runs.map((r) => r.id)).toEqual([dosingRun]);
+    for (const runId of [verificationRun, otherRun]) {
+      const hidden = await raw(handle, { method: 'GET', path: API_V1_ROUTES.runReadings(runId), headers: auth });
+      expect([hidden.status, code(hidden)]).toEqual([404, 'NOT_FOUND']);
+    }
+    const bad = await raw(handle, { method: 'GET', path: API_V1_ROUTES.session, headers: { Host: lanHost, ...bearer('rlg1.nope.nope') } });
+    expect([bad.status, code(bad)]).toEqual([401, 'INVALID_SESSION']);
+    const none = await raw(handle, { method: 'GET', path: API_V1_ROUTES.session, headers: { Host: lanHost } });
+    expect([none.status, code(none)]).toEqual([401, 'UNPAIRED']);
+  });
+
+  it('keeps the D30 pairing rate limit (5 failures, then 429 with Retry-After)', async () => {
+    const { handle, lanHost } = await startLanPolicyOnLoopback(fixture().api);
+    const json = { Host: lanHost, 'Content-Type': 'application/json' };
+    for (let i = 1; i <= 5; i += 1) {
+      const res = await raw(handle, { method: 'POST', path: API_V1_ROUTES.pairing, headers: json, body: pairingBody('WRNG-WRNG-WRNG') });
+      expect(res.status, `attempt ${i}`).toBe(401);
+    }
+    const limited = await raw(handle, { method: 'POST', path: API_V1_ROUTES.pairing, headers: json, body: pairingBody(TEST_ONLY_PAIRING_CODE) });
+    expect([limited.status, code(limited)]).toEqual([429, 'PAIRING_RATE_LIMITED']);
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+  });
+
+  it('keeps request validation, limits, security headers, no CORS and secret-free logs', async () => {
+    const logs = { req: [] as HttpRequestLog[] };
+    const { handle, lanHost } = await startLanPolicyOnLoopback(fixture().api, logs);
+    const method = await raw(handle, { method: 'PUT', path: API_V1_ROUTES.runs, headers: { Host: lanHost } });
+    expect([method.status, method.headers.allow]).toEqual([405, 'GET, POST']);
+    const type = await raw(handle, { method: 'POST', path: API_V1_ROUTES.pairing, headers: { Host: lanHost, 'Content-Type': 'text/plain' }, body: 'x' });
+    expect(type.status).toBe(415);
+    const big = await raw(handle, {
+      method: 'POST',
+      path: API_V1_ROUTES.pairing,
+      headers: { Host: lanHost, 'Content-Type': 'application/json' },
+      body: Buffer.alloc(MAX_JSON_BODY_BYTES + 1, 0x20),
+    });
+    expect(big.status).toBe(413);
+    const malformed = await raw(handle, {
+      method: 'POST',
+      path: API_V1_ROUTES.pairing,
+      headers: { Host: lanHost, 'Content-Type': 'application/json' },
+      body: '{nope',
+    });
+    expect(malformed.status).toBe(400);
+    const preflight = await raw(handle, {
+      method: 'OPTIONS',
+      path: API_V1_ROUTES.pairing,
+      headers: { Host: lanHost, Origin: 'http://evil.example', 'Access-Control-Request-Method': 'POST' },
+    });
+    const ok = await raw(handle, { method: 'GET', path: API_V1_ROUTES.session, headers: { Host: lanHost, Origin: 'http://evil.example' } });
+    for (const res of [method, type, big, malformed, preflight, ok]) {
+      expect(Object.keys(res.headers).filter((h) => h.startsWith('access-control-'))).toEqual([]);
+    }
+    expect(ok.headers['cache-control']).toBe('no-store');
+    expect(ok.headers['x-content-type-options']).toBe('nosniff');
+    expect(ok.headers['referrer-policy']).toBe('no-referrer');
+    await raw(handle, {
+      method: 'POST',
+      path: API_V1_ROUTES.pairing,
+      headers: { Host: lanHost, 'Content-Type': 'application/json' },
+      body: pairingBody(TEST_ONLY_PAIRING_CODE),
+    });
+    const logged = JSON.stringify(logs.req);
+    expect(logged).not.toContain(TEST_ONLY_PAIRING_CODE);
+    expect(logged).not.toContain(LAN);
+    expect(logged).not.toContain('evil.example');
+  });
+});
+
+/**
+ * OPT-IN real-socket LAN test (C4): binds the gateway to a REAL private IPv4
+ * interface of this machine for a few seconds. That exposes the test server to
+ * the local network and may trigger a Windows Defender Firewall prompt, so it
+ * runs only with ROBOLIME_LAN_SOCKET_TEST=1 and skips visibly otherwise (or when
+ * no private interface exists). Test data and pairing codes are synthetic.
+ */
+describe.skipIf(process.env.ROBOLIME_LAN_SOCKET_TEST !== '1')('LAN mode (D36): OPT-IN real bind on a private interface', () => {
+  it('binds exactly the assigned private address and enforces the exact Host', async (ctx) => {
+    const address = Object.values(networkInterfaces())
+      .flat()
+      .find((e) => e !== undefined && !e.internal && e.family === 'IPv4' && isRfc1918Ipv4(e.address))?.address;
+    if (address === undefined) {
+      ctx.skip(); // no private IPv4 interface on this machine
+      return;
+    }
+    running = await startGatewayHttpServer({ api: fixture().api, mode: 'lan', host: address, port: 0 });
+    expect([running.mode, running.host]).toEqual(['lan', address]);
+    const p = running.port;
+    expect((await raw(running, { method: 'GET', path: API_V1_ROUTES.session, headers: { Host: `${address}:${p}` } })).status).toBe(401);
+    expect((await raw(running, { method: 'GET', path: API_V1_ROUTES.session, headers: { Host: `localhost:${p}` } })).status).toBe(400);
+    // Not reachable on loopback: only the LAN address is bound.
+    expect(await probeLoopback(p)).toBe('ECONNREFUSED');
   });
 });
