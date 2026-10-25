@@ -105,20 +105,37 @@ describe('validateLoRaMessage', () => {
       },
     ];
 
-    const valid = ['2024-02-29T12:00:00Z', '2000-02-29T12:00:00Z', '2026-01-31T23:59:59Z', '2026-03-01T01:02:03.000Z'];
+    const valid = [
+      '2024-02-29T12:00:00Z',
+      '2000-02-29T12:00:00Z',
+      '2028-02-29T00:00:00Z',
+      '2026-01-31T23:59:59Z',
+      '2026-03-01T01:02:03.000Z',
+      '2026-03-01T01:02:03.5Z', // one fractional digit
+    ];
     const invalid = [
       '2025-02-29T12:00:00Z', // not a leap year
       '1900-02-29T12:00:00Z', // century, not a leap year
       '2026-02-30T12:00:00Z',
       '2026-04-31T12:00:00Z',
+      '2026-06-31T12:00:00Z',
+      '2026-09-31T12:00:00Z',
       '2026-00-10T12:00:00Z',
       '2026-13-01T12:00:00Z',
       '2026-03-00T12:00:00Z',
       '2026-03-01T24:00:00Z',
       '2026-03-01T12:60:00Z',
       '2026-03-01T12:00:60Z',
+      '2026-12-31T23:59:60Z', // leap second
       '2026-03-01 12:00:00', // space instead of T
+      '2026-03-01T12:00:00+08:00', // offset instead of Z
+      '2026-03-01T12:00:00z', // lowercase z
+      '2026-03-01t12:00:00Z', // lowercase t
+      '2026-03-01T12:00:00.1234Z', // more than 3 fractional digits
+      '2026-03-01T12:00:00Z\n', // trailing newline
+      ' 2026-03-01T12:00:00Z', // leading space
     ];
+    const nonStrings: unknown[] = [1767225600000, null, new Date(0), {}];
 
     for (const { kind, field, message } of timestamped) {
       it(`${kind}.${field} accepts real calendar timestamps and keeps them exactly as sent`, () => {
@@ -134,6 +151,14 @@ describe('validateLoRaMessage', () => {
           const result = validateLoRaMessage({ ...message, [field]: ts });
           expect(result, ts).toMatchObject({ ok: false, code: 'INVALID_FIELD' });
           if (!result.ok) expect(result.issues.map((i) => i.field), ts).toEqual([field]);
+        }
+      });
+
+      it(`${kind}.${field} rejects non-string values on that field only`, () => {
+        for (const value of nonStrings) {
+          const result = validateLoRaMessage({ ...message, [field]: value });
+          expect(result, String(value)).toMatchObject({ ok: false, code: 'INVALID_FIELD' });
+          if (!result.ok) expect(result.issues.map((i) => i.field), String(value)).toEqual([field]);
         }
       });
     }
