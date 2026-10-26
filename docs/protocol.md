@@ -12,6 +12,35 @@ signed off, and **manual commands are specified but disabled** (decision D21).
 | **USB serial v1** | Laptop (TypeScript gateway) ⇄ gateway ESP32 | Software team (bridge firmware implements it) | Byte layout defined here — **proposed** until the bridge firmware implements it and a loopback test passes (OPEN_ITEMS #19) |
 | **LoRa v1** | Robot Ra-02 ⇄ gateway Ra-02 | Firmware team | **Logical** contract defined here (kinds, fields, rules, limits). **Byte layout not signed off** (OPEN_ITEMS #1); the code refuses to encode/decode real packets |
 
+> **Later status (2026-10-25). This document describes the current
+> implementation; it does not approve the proposals below.**
+> - **D22 (§2) is still the implemented USB-serial protocol.** The gateway
+>   code still uses the COBS/CRC binary framing described here.
+> - **D37 proposes a text-based replacement for the USB link only. It is
+>   NOT approved** (OPEN_ITEMS #35). The LoRa contract (§3) is unaffected.
+> - **D38 confirms that the receiver initiates a robot-data request every 3
+>   seconds.** The radio exchange (request and response formats), timing,
+>   the scheduler that replaces or amends the robot-initiated model in §5
+>   (D24), and the ACK behaviour within a polled exchange all remain
+>   unresolved (OPEN_ITEMS #20, #36, #37, #15, #31). `RADIO_SCHEDULE` stays
+>   `null`.
+> - The opening paragraph's "No firmware exists in this repository" was true
+>   when written (Phase 3). Since then a receiver **test sketch** has been
+>   added: `Robot Code/Test Cases/SPRINT_1_Gateway.ino`. It is a text test
+>   harness. It implements neither D22 nor D37, and it is not an approved
+>   bridge or protocol implementation. No bridge firmware implementing an
+>   approved USB-serial contract, and no robot-side firmware, exists in the
+>   repository (OPEN_ITEMS #19, #36).
+>
+> - **Topology (D40, D41):** the field deployment is laptop-only. The
+>   "SQLite · LAN API" label in the §1 diagram and the "LAN HTTP server" in
+>   the code map are historical: the local API serves the laptop's own app on
+>   loopback, and LAN is out of scope. The robot → receiver → USB → laptop
+>   path is unchanged.
+>
+> The sections below are kept unchanged as the record of the implemented
+> contract.
+
 ## 1. Hardware topology
 
 ```

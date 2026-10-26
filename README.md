@@ -31,9 +31,19 @@ alongside the team's hardware files.
 > - USB serial and LoRa protocol contracts, a packet simulator, and the
 >   Supabase cloud-mirror schema (tested on a throwaway local PostgreSQL only).
 >
+> **Deployments (D41):** online through Vercel + Supabase when internet is
+> available; a separate local deployment on the team's laptop for field
+> operation without internet. The field deployment is laptop-only.
+>
 > **Not implemented:** the serial-port adapter, LAN access (the API is
-> loopback-only; LAN binding needs separate approval), cloud upload, app
-> screens and crop scoring. Nothing has been applied to hosted Supabase.
+> loopback-only; LAN is out of scope under D40/D41, and the opt-in LAN code
+> from D36 is unused), hosted cloud synchronisation, app screens and crop
+> scoring. A one-way gateway sync worker exists (`apps/gateway/src/sync/`,
+> `src/cli/sync.ts`, not yet an npm script; D35). It has been tested only
+> against a fake endpoint and a throwaway local PostgreSQL + PostgREST target
+> (`docs/cloud-mirror.md`), which is not validation of the official Supabase
+> stack or the hosted project. Nothing has been applied to hosted Supabase,
+> and the Vercel deployment is outstanding.
 > **Manual commands are specified but disabled.**
 >
 > **M5a — committed locally, not yet published (decision D33):** the web

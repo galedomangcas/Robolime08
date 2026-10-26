@@ -22,7 +22,12 @@ opt-in A2 run, against a throwaway local PostgreSQL 17.5 + standalone
 PostgREST 16.4 (`cloud-mirror.md`); **not** against the official Supabase
 stack or the hosted project.
 Opt-in LAN binding (D36) is implemented and covered by automated tests only;
-it has not been run on a phone or a real field network.
+it has not been run on a phone or a real field network. (Later status,
+2026-10-25: under D40 and D41, LAN is excluded project-wide and the field
+deployment is **laptop-only**. The gateway, SQLite and the local web app run
+on the team's laptop on loopback, and no phone connects to it. The LAN-mode
+material below is historical and out of scope. The physical robot →
+receiver → USB → laptop path is not yet implemented or tested.)
 **Not built yet:** the real LoRa byte codec (spec unsigned) and a `serialport`
 adapter for the runtime (moved to build-order item 8, D34). Push-based live updates are not planned for
 Phase 4: status refresh uses the app's 10 s polling (D34).
@@ -187,7 +192,9 @@ pending ──claim──► syncing ──confirmed write──► synced
 
 Threat model: possession of the pairing code is a **deliberately limited
 single-owner-device credential** on an isolated field LAN. It is not
-multi-user authentication and does not identify a person.
+multi-user authentication and does not identify a person. (Later status,
+D40/D41: there is no field LAN. Pairing happens on the laptop itself over
+loopback.)
 
 - `pairing:provision` generates a 12-symbol Crockford base32 code
   (60 bits, shown as `XXXX-XXXX-XXXX`) and prints it **once**. Only a salted
@@ -251,6 +258,7 @@ multi-user authentication and does not identify a person.
   60-bit code and the scrypt cost remain the main protection.
 - **LAN mode (D36) keeps this rate limit unchanged.** It is off by default;
   in LAN mode the counter is keyed on each phone's real socket address.
+  (Historical; LAN mode is out of scope under D40/D41.)
 
 ## Local API contract (v1)
 
@@ -305,7 +313,10 @@ does, and stops cleanly on Ctrl+C (HTTP server first, then the database).
 - **Loopback by default (decision D28).** Without LAN mode, `0.0.0.0`, `::`,
   LAN addresses and host names are refused with an error — never silently
   replaced.
-- **LAN mode (decision D36, opt-in).** `--lan` or `GATEWAY_LAN_MODE=on` plus
+- **LAN mode (decision D36, opt-in) — HISTORICAL, OUT OF SCOPE (D40, D41):**
+  the code exists but is not used; do not enable it for RoboLime
+  deployments. The rest of this bullet records how the code behaves.
+  `--lan` or `GATEWAY_LAN_MODE=on` plus
   `--host`/`GATEWAY_HOST` set to this computer's own RFC 1918 IPv4 address
   (10.x, 172.16–31.x, 192.168.x) that is assigned to an interface right now.
   Wildcard, loopback, public, link-local, CGNAT, multicast, IPv6, host names
@@ -356,7 +367,9 @@ npm run serve -w @robolime/gateway -- --db <file> --web-dir <ABSOLUTE path to ap
 ```
 
 Then open `http://127.0.0.1:8780/` **on the gateway computer** (loopback
-only; phones cannot reach it until LAN binding is approved). Pass an absolute
+only; phones cannot reach it until LAN binding is approved. Later status,
+D40/D41: phones are not part of field operation, and this laptop-local page
+is the field interface). Pass an absolute
 path, or `../mobile/dist`: `npm run -w` runs inside `apps/gateway`, so
 `apps/mobile/dist` does not resolve there (the gateway then refuses to start
 with "Web export folder not found").

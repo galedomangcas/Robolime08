@@ -11,6 +11,10 @@ synchronized when internet is available; Vercel is an optional online web
 host. Neither is required in the field. No self-hosted Supabase stack in the
 field baseline.
 
+(Later status, 2026-10-25: D39 makes the hosted Supabase + Vercel deployment a
+**release requirement**, not an optional host. Neither service is still
+required *in the field*: offline field operation is unchanged.)
+
 ## D2 — One Expo codebase for Android and web (locked)
 
 React Native + Expo + strict TypeScript. No Next.js app, no separate web
@@ -224,6 +228,12 @@ ESP32. The version byte (offset 0) and CRC trailer are frozen across
 versions so mismatches are always detectable. This contract is software-owned
 and proposed until the bridge firmware implements it (OPEN_ITEMS #19).
 
+(Later status, 2026-10-25: under reconsideration for the USB-serial link only.
+The project owner declined to adopt D22 unchanged; D37 proposes a text-based
+replacement for the USB link. D37 is not approved, so the gateway code still
+implements D22. The rationale above is kept as the historical record. The LoRa
+contract (D23) is not affected.)
+
 ## D23 — LoRa contract is logical; the byte layout sits behind a codec (Phase 3)
 
 The radio message set, fields, identifiers, validation and size limits are
@@ -239,6 +249,12 @@ The gateway transmits only in a response window that the robot opens after
 each uplink, one frame at a time, STOP > storage ACK > other commands. This
 avoids collisions on a half-duplex SX1278 pair without clock sync. Window
 timing is unconfirmed (OPEN_ITEMS #20).
+
+(Later status, 2026-10-25: D38 confirms that the receiver initiates a
+robot-data request every 3 seconds. That conflicts with D24's assumption that
+the robot opens every exchange. D24 needs a reviewed replacement or amendment
+(OPEN_ITEMS #37). Until then `radioScheduler.ts` and `bridgeSession.ts` still
+implement D24 unchanged, and `RADIO_SCHEDULE` stays `null`.)
 
 ## D25 — Storage ACK semantics (Phase 3, proposed to firmware)
 
@@ -644,7 +660,10 @@ retrying cloud sync worker with its local recovery tests. Neither exists yet.
 (Later status: the sync worker was implemented in M6a–M6d, see D35, and is
 tested against a fake endpoint and a local PostgreSQL + standalone PostgREST
 target, but not the official Supabase stack; the LAN HTTP API is still not
-built.)
+built.) (Later status, 2026-10-25: D36 has since implemented opt-in LAN
+binding (commit `ef2ba25`), with automated tests only. The opt-in real-socket
+test and physical-device acceptance remain unverified. The previous sentence
+was accurate when written.)
 LAN binding stays prohibited until a new explicit decision authorises it: D28
 sets the loopback-only bind policy and makes pairing rate limiting a
 prerequisite (now met by D30), and D30 records LAN binding as out of scope
@@ -761,6 +780,12 @@ oldest first.
 real-socket test and the physical phone-on-Wi-Fi test (§10) have not been run.
 Amends D28's bind policy only; D30 is unchanged. Loopback remains the default.
 
+(Later status, 2026-10-25: the implementation is no longer uncommitted. It was
+committed as `ef2ba25741a5d632b5fb7cfaf771babe08b9e6f9`, "feat(gateway): add
+opt-in LAN binding", locally on `main` and not pushed. LAN acceptance is still
+NOT established: the opt-in real-socket test and the physical test (§10)
+have not been run.)
+
 **Implementation (approved choices C1–C6):** `GATEWAY_LAN_MODE=on|off`
 (case-insensitive; any other value refuses to start) or `npm run serve --
 --lan` (an absent flag defers to the environment); `GATEWAY_HOST`/`--host`
@@ -868,7 +893,331 @@ the firewall rule, client isolation, pairing and status over the LAN IP, the
 served web app, unreachability from other networks, and data surviving a
 restart. Automated tests alone do not establish LAN acceptance.
 
+(Later status, 2026-10-25: D40 excludes LAN from the whole project. This entry
+and its code stay as the historical record. No LAN test or LAN acceptance will
+be performed, and §10's LAN acceptance is out of scope.)
+
 **Relationship to other decisions:** amends D28's bind policy and its Host
 allow-list in LAN mode; keeps all other D28 controls and all of D30; records
 the policy D34 left open. Checklist row 5: **Partly verified** (implemented;
 automated tests only; opt-in real-socket and physical tests not run).
+
+## D37 — Proposed text-based USB-serial contract (Phase 4)
+
+**Status: PROPOSED — not approved.** Documentation only; it authorises no
+firmware, gateway, test, dependency or hardware work.
+
+**Context:** the project owner declined to adopt D22's COBS binary framing
+unchanged (2026-10-25); the project adapts the incoming-byte handling on the
+TypeScript side. The existing sketch `Robot Code/Test Cases/SPRINT_1_Gateway.ino`
+prints free text, turns received radio bytes into a trimmed `String`
+(lines 60-67) and mixes sample output into the same port. Its two
+`[Robolime] MSG:…` lines (34, 49) are confirmed sample output, not telemetry.
+None of that can be used as a protocol: it is unbounded, has no checksum and
+can corrupt binary payloads.
+
+**Proposal:**
+1. **Framing.** One frame per line, terminated by LF (a CR before the LF is
+   tolerated). Printable ASCII (0x20-0x7E) only. At most **640 characters**
+   per line excluding the terminator (proposed bound: a 255-byte payload as
+   hex is 510 characters, plus the other fields). A longer line is discarded
+   up to the next LF and reported once.
+2. **Structure.** `RL1 <TYPE> <key>=<value> … *<CRC>`. `RL1` names text
+   contract version 1 and stays at the start of every line in all versions.
+   Fields appear in a fixed order per type. `<CRC>` is CRC-16/CCITT-FALSE
+   (poly 0x1021, init 0xFFFF, as in `packages/shared/src/protocol/crc16.ts`)
+   over every byte before `*`, as 4 uppercase hex digits. The CRC is checked
+   before any field is trusted.
+3. **Message types.** The same meanings as D22, so the gateway session's
+   rules stay unchanged: `HELLO` (both directions), `PING`/`PONG`, `RX`
+   (receiver → laptop: RSSI, SNR, receiver uptime, payload length, payload),
+   `TX` (laptop → receiver: transmit once), `TXR` (transmit result), `FAULT`
+   and `REJ` (line rejected; a valid `REJ` is never itself rejected). Exact
+   per-type field lists are fixed in review, not here.
+4. **Opaque payload.** Radio bytes travel as uppercase hex: exactly 2 × len
+   digits, len 1-255. The receiver never interprets, trims or alters them and
+   keeps them in a fixed-size byte buffer, never a `String`. What the bytes
+   mean is governed by the signed-off on-air specification (OPEN_ITEMS #1,
+   #26), not by D37.
+5. **Diagnostics.** Lines starting with `#` are diagnostic. The gateway logs
+   them (bounded) and never parses them. Any other line that does not start
+   with `RL1` is rejected and counted. Sample or debug text never appears on
+   a protocol line.
+6. **Errors.** A bad CRC, unknown type, bad field or over-long line is
+   rejected without stopping the stream.
+7. **Unchanged.** Write-before-ACK; the gateway transmits only
+   `STORAGE_ACK`s; `guardedSchedule`, `MANUAL_COMMANDS_APPROVED=false`,
+   `RADIO_SCHEDULE=null` and `DEFAULT_GATEWAY_HOST='127.0.0.1'`.
+
+**Illustrative only** — placeholders, not telemetry and not a final wire
+format:
+
+```
+RL1 RX rssi=<int> snr=<int> up=<uint> len=<n> hex=<2n hex digits>*<crc4>
+# receiver diagnostic text, never parsed
+```
+
+**Trade-offs:** readable in a serial monitor and simple to emit on the ESP32;
+payloads take about twice the bytes of D22. Assuming the sketch's
+unconfirmed 115200 baud (OPEN_ITEMS #19), a maximum-length line takes about
+56 ms.
+
+**If approved:** D37 supersedes D22 for the USB-serial link only. The gateway
+change (a text framing module plugged into the bridge session, with golden
+test vectors) needs separate authorisation, and the firmware team must review
+the contract (OPEN_ITEMS #35). The LoRa contract (D23) and D25 are unaffected.
+
+## D38 — Three-second receiver-initiated polling requirement (Phase 4)
+
+**Status: CONFIRMED project requirement (project owner, 2026-10-25).** The
+behaviour is **not verified on hardware**, and this entry authorises no
+firmware, gateway, scheduler or hardware work.
+
+**Confirmed:** the receiver ESP32 (connected to the laptop by USB) initiates a
+robot-data request every **3 seconds**. The robot ESP32 is intended to listen
+for each request and respond with the requested data.
+
+**Not verified:** that the robot actually listens for and answers each
+request; whether it can listen while driving, dosing, transmitting or
+retrying; and whether a 3-second cycle fits the radio airtime. The robot-side
+sketch and the approved packet specification are not available yet. The
+existing receiver sketch implements a 3-second timer (lines 8-9, 29-39) with
+the ASCII request `GET_ROBOT_STATUS`, which is sample code, not an approved
+on-air request.
+
+**Unresolved (not invented or approved here):**
+- request and response packet formats, and which data a response carries
+  (status, readings, buffered readings) — OPEN_ITEMS #1, #26, #36
+- robot listening windows, response timeout and handling of no reply — #20,
+  #36
+- retry policy on both sides, and whether polling replaces or adds to the
+  robot's retry from flash — #20, #36
+- radio settings and Philippine NTC compliance, including duty cycle at a
+  3-second cycle — #18, #33
+- ACK behaviour within a polled exchange: format, timing, record matching and
+  the D25 meanings — #15, #31, #37
+- the scheduler that replaces or amends D24 — #37
+- delivery-statistics definitions under polling, and the staleness threshold
+  — #3, #38
+- whether the gateway can see each poll: the receiver could report every
+  request it sends, and every missing reply (a proposal, not a decision) — #38
+
+**Relationship to other decisions and requirements:**
+- Conflicts with D24 (robot-initiated exchange).
+- Conflicts with `CLAUDE.md` §5 (Staleness, timestamps, and display rules,
+  stale-threshold bullet) and §6 (Binary packet decoding and gateway
+  ingestion, "Status packet"): status only after each cell, no heartbeat, not
+  retried. Listed under Manuscript reconciliation in
+  `OPEN_ITEMS.md` (#39).
+- Relationship to D29: D29 called "the 3-second transmission interval" a
+  temporary development target. D38 confirms 3 seconds as the receiver's
+  polling interval. Whether these are the same interval is unresolved (#33).
+- A poll is a data request, not a command, so D21 and
+  `MANUAL_COMMANDS_APPROVED=false` are unchanged. Whether a receiver-initiated
+  request is consistent with `CLAUDE.md` §3 (Robot and transport boundary,
+  observe-only bullet) needs team confirmation (#39).
+- `RADIO_SCHEDULE` stays `null` and the hardware guard stays in place.
+
+## D39 — Both deployment targets are required for release; D34 closing rule amended
+
+**Status: DECIDED (project owner, 2026-10-25).** Documentation only. This
+entry marks no phase complete and authorises no implementation, migration,
+deployment or hardware work.
+
+**1. Dual-deployment release requirement.** A product release requires
+**both**:
+- the **local/offline farm deployment**: the laptop TypeScript gateway, SQLite
+  as the local source of truth, the local API, and the local Expo web/mobile
+  app, working with no internet; and
+- the **hosted online deployment**: the **existing** Supabase project (cloud
+  mirror, RLS-scoped online data access) and the **existing** Vercel project
+  (hosted Expo web build), working online.
+
+Supabase validation and the Vercel deployment are release requirements, not
+optional future work. These are two **deployment configurations of the one
+shared Expo + TypeScript codebase** (D2), not two codebases. Field operation
+still never depends on the cloud (D1): the local configuration must work with
+no internet, and the gateway syncs to Supabase only when connectivity exists.
+
+**Mismatch recorded, not resolved here (historical; superseded):** at the time
+of this decision, four `CLAUDE.md` passages described the online deployment as
+optional. The quoted phrases below are **superseded wording**, not current
+requirements; they were corrected later (see the later-status note at the end
+of this entry):
+- §1 (Role and mission): "optional online deployment"
+- §12 (Implementation workflow), build-order item 9: "optional Vercel online
+  deployment"
+- §12, the "Protect the field data path" paragraph: "before optional cloud
+  polish"
+- §14 (First action — adapt to the real starting state): "optional cloud
+  sync"
+
+So did D1 (later-status note added) and, previously, the D34 rulings, which
+track hosted validation under build-order items 8–9. When D39 was originally
+recorded, `CLAUDE.md` was not edited as part of this entry; it was left for
+the team to amend, and the manuscript to be checked (OPEN_ITEMS #12 and #39
+cover the related reconciliation). That describes the state at the time: the
+later-status note below records that the `CLAUDE.md` passages were
+subsequently corrected.
+
+**2. D34 closing rule: AMENDED (not approved as proposed).** The proposed
+rule in `docs/architecture.md` ("Phase 4 exit checklist") is kept as its
+historical record. The owner amended it with these principles:
+- Phase 4 may close only when every criterion designated as **mandatory for
+  Phase 4** has adequate documented evidence.
+- Deferred hardware, field and production-release requirements stay
+  explicitly open and are never described as passed.
+- Phase 4 closure is **not** product release readiness.
+- Both deployment targets (§1) remain required before product release.
+- No closing rule overrides the safety gates: `MANUAL_COMMANDS_APPROVED=false`,
+  `RADIO_SCHEDULE=null`, `DEFAULT_GATEWAY_HOST='127.0.0.1'`, the hardware
+  guard, and write-before-ACK.
+
+**Phase 4 is not complete.** Which rows are mandatory for Phase 4 is not
+re-designated here. The proposal's split (rows 1–11 mandatory; rows 12–15
+Deferred or Blocked) remains the working designation until the owner confirms
+or changes it.
+
+**Unchanged:** D36 and its restrictions (no separate LAN-policy decision is
+reopened); D37 remains PROPOSED and unapproved; D38 polling is a confirmed
+requirement without hardware verification.
+
+(Later status, 2026-10-25, project owner:
+- **Mandatory rows confirmed:** rows 1–11 are mandatory for Phase 4; rows
+  12–15 are Deferred or Blocked. Every mandatory row needs adequate
+  documented evidence, and a partly verified row (currently row 5) stays
+  explicitly partial. Phase 4 is still not complete.
+- **`CLAUDE.md` corrected:** the four passages above (§1; §12 build-order
+  item 9; §12 "Protect the field data path" paragraph; §14) were narrowly
+  amended to state that both deployments are required before
+  product release, and that offline field operation never depends on
+  internet, Supabase or Vercel. The mismatch in §1 is resolved. The
+  manuscript still has to be checked (OPEN_ITEMS #12).
+- **Build-order placement:** hosted Supabase validation and the Vercel
+  deployment stay in build-order items 8–9. They are mandatory release
+  requirements, not Phase 4 closure criteria, and neither is complete.)
+
+(Later status, 2026-10-25: D40 excludes LAN project-wide. Row 5's LAN
+acceptance is Out of Scope and leaves the mandatory closure criteria; every
+other mandatory row still needs adequate documented evidence.)
+
+## D40 — LAN networking excluded from the entire project
+
+**Status: DECIDED (project owner, 2026-10-25).** A project-wide scope
+decision. Documentation only: no code, test, script or configuration is
+changed or removed.
+
+**Decision:**
+- LAN networking is **excluded from the entire RoboLime project**. LAN will
+  not be used at any point.
+- No LAN real-socket test (`ROBOLIME_LAN_SOCKET_TEST=1`), physical
+  phone-over-LAN test or LAN acceptance test will be performed.
+- LAN-specific behaviour is **not** a product requirement and **not** a
+  Phase 4 closure criterion.
+- The local/offline deployment **remains required** (D39).
+- D40 authorises **no replacement networking architecture**. No Wi-Fi, other
+  network or new connection method is assumed or approved.
+
+**Historical records kept:** D28, D30, D34 and D36 are unchanged. D36's
+opt-in LAN code (`GATEWAY_LAN_MODE`/`--lan`, `apps/gateway/src/http/config.ts`,
+`server.ts`, `cli/serve.ts`) and its tests stay in the repository untouched.
+Its presence does not mean LAN is in scope or will be used. Removing it would
+need a separate, explicit decision. Loopback stays the default
+(`DEFAULT_GATEWAY_HOST='127.0.0.1'`).
+
+**Consequence (recorded, not resolved):** `CLAUDE.md` §3 relied on the
+laptop's LAN for phones and tablets to reach the gateway offline. With LAN
+excluded, the gateway's local API and web app are reachable **only on the
+laptop itself** (loopback). How, or whether, the Android app or another
+device accesses local field data offline is now **undefined** (OPEN_ITEMS
+#40). No device connectivity of any kind has been demonstrated.
+
+**Checklist effect:** row 5 (LAN HTTP API) is **Out of Scope under D40**,
+neither passed nor failed. The loopback API requirements stay in row 4. The
+LAN parts of rows 13 and 14 are out of scope too; their non-LAN parts stay
+Deferred. The mandatory Phase 4 set (D39) is now rows 1-4 and 6-11, each
+still needing adequate documented evidence. Phase 4 is not complete, and
+Phase 4 closure is still not product release readiness.
+
+**Unchanged:** `MANUAL_COMMANDS_APPROVED=false`, `RADIO_SCHEDULE=null`,
+`DEFAULT_GATEWAY_HOST='127.0.0.1'`, the hardware guard and write-before-ACK.
+No hardware, serial, radio, cloud or deployment work is authorised.
+
+(Later status, 2026-10-25: D41 resolves the consequence above. The field
+deployment is laptop-only, and offline phone or Android access to the laptop
+is not a requirement (OPEN_ITEMS #40 resolved as a scope question).)
+
+## D41 — Two deployment environments: online (Vercel + Supabase) and local laptop
+
+**Status: DECIDED (project owner, 2026-10-25).** Definitive deployment
+architecture. Documentation only: no code, test, script or configuration is
+changed. It clarifies D39 and D40 and resolves the offline-phone question
+D40 raised. D28, D30, D34, D36, D39 and D40 stay as historical records.
+
+**A. Online deployment (internet available).**
+- Vercel hosts the online RoboLime application, and hosted Supabase provides
+  the database and cloud data access.
+- Farmers, researchers and thesis panel members use it when they have
+  internet access.
+- It is a separate environment from the laptop's local field deployment.
+- Hosted Supabase validation and the Vercel deployment remain required before
+  product release (D39).
+- **Implementation status (unchanged by D41):** no Supabase client or cloud
+  data adapter exists in the app; the online claim/pairing flow is not
+  implemented (OPEN_ITEMS #14); the schema has not been run on the official
+  stack or applied to the hosted project (#17); Vercel is not configured or
+  deployed. Cloud sync is implemented in the gateway and verified against a
+  local PostgreSQL/PostgREST target only (D35). Hosted live telemetry is not
+  implemented or verified.
+
+**B. Offline field deployment (no internet).**
+- The team runs RoboLime **locally on its laptop**: the local app, the
+  TypeScript gateway and SQLite storage.
+- The data path is unchanged: robot LoRa radio → existing receiver hardware
+  → USB serial → laptop TypeScript gateway → durable SQLite write → local app.
+  There is no second gateway. SQLite durability and write-before-ACK are
+  unchanged.
+- It does not depend on internet access, Vercel or Supabase.
+- The laptop is the field operator's interface and local data store. The app
+  is used on the laptop itself (loopback).
+- **The phone is not part of field operation.** Offline Android or phone
+  access to the laptop is not a requirement, and no phone-to-laptop
+  connection is needed.
+- **Implementation status:** the laptop gateway, SQLite, loopback API, local
+  web app and CSV exports are implemented and tested on loopback. The
+  physical robot → receiver → USB → laptop path is **not** implemented or
+  tested: there is no serial adapter, no signed-off LoRa layout, and the
+  receiver sketch implements neither D22 nor D37 (checklist row 12).
+
+**C. No LAN and no alternative phone connection.** D40 stands: LAN, hotspot,
+Bluetooth, Wi-Fi Direct, USB phone connectivity and any other phone-to-laptop
+connection are not required, and none is designed or authorised. The D36
+opt-in LAN code and tests stay untouched and out of scope, and loopback stays
+the default. This does not remove the Android app, the shared Expo codebase
+(D2) or the hosted application.
+
+**D. Phase 4 and release.** D39's distinction between Phase 4 closure and
+product release still applies, as amended by D40 and D41:
+- The mandatory Phase 4 criteria stay rows 1–4 and 6–11, each needing
+  adequate documented evidence.
+- Row 5 stays Out of Scope (D40), and offline Android access is not a
+  criterion.
+- Rows 12–15 stay Deferred or Blocked.
+- **Phase 4 is not complete.**
+
+**E. External (farmer- and panel-facing) wording.** Internal records stay
+precise. External descriptions focus on the actual deployment capabilities:
+
+> "RoboLime supports online access through Vercel and Supabase when an
+> internet connection is available. When internet access is unavailable, a
+> locally deployed version of the application runs on the team's laptop for
+> field operation."
+
+External material need not describe internal networking deliberations or
+rejected alternatives. That is a presentation choice, not permission to hide
+a material limitation when asked, or to claim unimplemented or unverified
+functionality.
+
+**Unchanged:** `MANUAL_COMMANDS_APPROVED=false`, `RADIO_SCHEDULE=null`,
+`DEFAULT_GATEWAY_HOST='127.0.0.1'`, the hardware guard. No implementation,
+hardware, serial, radio, cloud or deployment work is authorised.
