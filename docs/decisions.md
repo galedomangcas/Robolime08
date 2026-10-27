@@ -1581,3 +1581,47 @@ changed.
   - your explicit approval of the hosted run
 - **Unchanged:** migrations, RLS design (D18) and the open claim flow (#14).
   Details: `docs/hosted-migration-runbook.md` §6.
+
+## D52 — Online sign-in, claim flow, demo pairing command and apply kit v3
+
+**Status: IMPLEMENTED LOCALLY (2026-10-28). Hosted apply and Vercel deployment pending.**
+Requested by the project owner (finalize Supabase, online app, pairing code `10302026`, Vercel).
+
+- **Online sign-in = Supabase anonymous sign-in.** Email OTP was considered and
+  not used: CLAUDE.md §4 forbids requesting email, phone or third-party
+  identity, and names "anonymous auth plus an approved database function".
+  An anonymous session alone grants nothing (RLS).
+- **Claim = server-verified cloud claim code** (migration
+  `20261028000000_online_claim_flow.sql`, additive):
+  - `npm run cloud:claim-code -- --robot <id>` (gateway laptop, service-role
+    key from the gateway env) generates a random 60-bit code, shows it once,
+    and sends only its SHA-256 to `provision_robot_claim_code()` (service_role only)
+  - `claim_robot(code)` (authenticated only, SECURITY DEFINER,
+    `search_path=''`) verifies it and inserts the caller's `robot_claims` row;
+    5 failures per user / 30 overall per 15 minutes → `rate-limited`
+  - the client never names a robot id; cloud claim codes are separate from
+    local pairing codes
+- **Online app:** `cloudAuth.ts` (anonymous sign-in, refresh, sign-out over
+  `fetch`; no new dependency), `cloudReader.ts` (claim RPC + runs, readings,
+  recommendations, status; every row validated), `createCloudDataSource`
+  (same `FieldDataSource` interface as the field build), `OnlineRoot.tsx`
+  (claim screen, offline/error states). Screens name their source ("Field
+  gateway" / "RoboLime cloud"). Verification runs stay hidden. Observe-only.
+- **Vercel:** CSP `connect-src` adds the project origin. The build guard also
+  refuses non-`anon` JWTs in `EXPO_PUBLIC_*` and, on Vercel, missing public
+  Supabase settings.
+- **Local demo pairing (D47 unchanged):** `npm run demo:pairing` creates or
+  reuses a DEMO database in `%LOCALAPPDATA%\RoboLime\demo\`, loads the synthetic
+  fixture, provisions `10302026` and prints it. `npm run demo:serve` serves it
+  on loopback with demo pairing. Field databases are refused, as before. The
+  code is printed only by this command; it is not logged and is not in any web
+  bundle. It was already in Git history (D47 docs and `codes.ts`), so it cannot
+  be "kept out of history"; it is a public demo credential by design.
+- **Apply kit v3** (`C:\Users\doman\RoboLime-backups\phase4-apply-20261028-v3\`):
+  v2 + the claim-flow migration in the same transaction. Target fingerprint
+  `71fdcd2d…` (368 items). Rehearsed on a fresh faithful restore (rehearsal5):
+  LEGACY `6e0f3cc` → rollback → commit → TARGET → re-run refused; RLS and
+  claim tests pass. Details: `docs/hosted-migration-runbook.md` §7.
+- **Not done here (needs the owner):** running kit v3 on the hosted project (DB
+  password), enabling anonymous sign-ins (dashboard), Vercel login/link and
+  environment variables. No hosted resource was contacted or changed.

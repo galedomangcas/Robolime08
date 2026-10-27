@@ -263,6 +263,19 @@ npm run serve -w @robolime/gateway -- --db <new-demo-file> --demo-pairing --web-
 Open `http://127.0.0.1:8780/` on the same computer and enter `10302026`.
 Delete the demo file afterwards.
 
+### One-command demo pairing (D52)
+
+```
+npm run demo:pairing     # creates/reuses %LOCALAPPDATA%\RoboLime\demo\robolime-demo.sqlite, provisions and prints 10302026
+npm run build:web        # once, if apps/mobile/dist is missing
+npm run demo:serve       # loopback only, demo pairing on; add -- --port <n> if 8780 is busy
+```
+
+Open `http://127.0.0.1:8780/` and enter `10302026`. Both commands accept
+`-- --db <demo file>`. A field database is refused. This is the LOCAL pairing
+code only; online access uses a separate cloud claim code
+(`npm run cloud:claim-code`, D52).
+
 ### Pairing-attempt rate limiting (decision D30)
 
 - **Policy:** at most **5 failed pairing attempts per client IP address within

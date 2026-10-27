@@ -6,13 +6,15 @@ variables have **not** been inspected: there is no Vercel CLI or project link
 on the development machine.
 
 ## What the online build is today
-- **Notice only:** the online build shows "Online access is not available
-  yet" and makes no requests (D48).
-- **No online data path yet:** the cloud read client exists but is not wired
-  in (D49). It waits for the online claim flow (OPEN_ITEMS #14) and the hosted
-  schema (D42).
-- **Not a live service:** a deployment today must not be described as live
-  telemetry or robot access.
+- **Online flow (D52):** anonymous Supabase sign-in, then the cloud claim
+  code (verified server-side by `claim_robot()`), then the same status and
+  results screens as the field build, fed by the hosted mirror under RLS.
+  Observe-only; exports stay on the field laptop.
+- **Without valid public settings** the build shows "Online access is not
+  configured" and makes no requests. On Vercel the build guard fails instead.
+- **Data:** only what a field gateway has synced. A demo database can never
+  sync to a hosted project, so a fresh project shows "no data" until a field
+  robot syncs.
 
 ## Repository settings (`vercel.json`)
 | Setting | Value |
@@ -49,10 +51,15 @@ on the development machine.
    has **not** been run on 22 or 24.
 2. **No dashboard Build or Output overrides** that differ from `vercel.json`.
 3. **Environment variables:**
-   - none are required today
-   - **never** add a service-role or `sb_secret_` key
-   - later, only `EXPO_PUBLIC_SUPABASE_URL` and a **publishable/anon**
-     `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+   - required (Production and Preview): `EXPO_PUBLIC_SUPABASE_URL`
+     (`https://bkocxkavdosghmqjckty.supabase.co`) and a **publishable/anon**
+     `EXPO_PUBLIC_SUPABASE_ANON_KEY`. The build guard fails on Vercel if
+     either is missing.
+   - **never** add a service-role or `sb_secret_` key. The guard refuses
+     `EXPO_PUBLIC_*` names containing SERVICE_ROLE/SECRET, `sb_secret_` values,
+     and JWTs whose role is not `anon`.
+   - CSP `connect-src` allows only `'self'` and the project origin
+     (`vercel.json`).
 4. **Git integration:** which branch deploys to production.
    - Local `main` and GitHub `main` have diverged.
    - Pushing will deploy whatever `main` holds.

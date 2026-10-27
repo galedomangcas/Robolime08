@@ -246,3 +246,35 @@ the default-privilege check, a reviewed kit correction, and your approval).
     hosted structure **and grants** exactly (empty tables)
   - a restore onto the hosted project and a whole-database restore remain
     untested
+
+## 7. Kit v3 with the online claim flow (2026-10-28, D52)
+Status: **rehearsed; hosted run pending (owner runs it; needs the DB password).**
+
+- **Default-privilege capture:** the v1 script's `text || "char"` error is fixed
+  in `capture-hosted-default-privileges-readonly-v2.ps1` (`defaclobjtype::text`).
+  The original script and its empty failed output are kept. The v2 capture has
+  not been run against the hosted project (it needs the password). Kit v3
+  does not depend on it: `precheck.sql` asserts the `postgres` default
+  privileges in `public`/`private` inside the apply transaction and refuses
+  before any change if they differ from the rehearsal.
+- **Kit:** `C:\Users\doman\RoboLime-backups\phase4-apply-20261028-v3\` (README,
+  CHECKSUMS). It is v2 plus `20261028000000_online_claim_flow.sql` in the same
+  transaction, with a new postcheck (368-item manifest, `claim_robot` executable
+  by authenticated only, provisioning service_role only, no client grants on
+  the private claim tables) and classify TARGET `71fdcd2d…`. v1 and v2 are unchanged.
+- **Rehearsal 5** (`robolime-phase4-rehearsal5-db`, 127.0.0.1:55362, same image;
+  evidence `diag-rehearsal5-20261028\`):
+  - backup SHA-256 `2F9BF934…0D34` unchanged; restore with `supabase_admin`
+    defaults suspended, exit 0
+  - classification LEGACY `6e0f3cc…` (338): identical to the hosted capture
+  - apply answered "no" → ROLLED BACK, still LEGACY
+  - apply answered COMMIT → precheck (manifest, empty tables, default
+    privileges) and postcheck passed → COMMITTED → TARGET `71fdcd2…`
+  - re-run refused at precheck (exit 3), state unchanged
+  - synthetic seed + `rls_robot_scope.test.sql` + `claim_flow.test.sql` pass
+- **Operator note:** answer the COMMIT prompt by typing it in the console.
+  Piped input from PowerShell carries CR/LF and is read as "not COMMIT", which
+  rolls back (fail-safe).
+- **Recovery point:** proven for the public/private schema and grants (empty
+  tables) by two independent faithful restores. A restore onto the hosted
+  project itself remains untested.

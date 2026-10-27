@@ -176,12 +176,29 @@ This is not an official Supabase verification.
 
 ### Trusted claim boundary
 
-There is **no client-writable path to `robot_claims`**. A claim can only be
-created by a trusted process using the service role (e.g. an operator script
-or a future server-side claim function). The online pairing/claim flow is
-**not implemented** (OPEN_ITEMS #14). Until it is, online clients see no
-robot data unless an operator grants a claim by hand. This does not affect
-offline local pairing at all.
+There is **no client-writable path to `robot_claims`**. A claim is created
+only by the server-side claim function or by service_role (D52, migration
+`20261028000000_online_claim_flow.sql`):
+
+1. On the gateway laptop, with internet and the gateway's service-role key,
+   `npm run cloud:claim-code -- --robot <firmware robot id>` generates a random
+   cloud claim code (60 bits), shows it once, and sends only its SHA-256 to
+   `provision_robot_claim_code()` (service_role only). The robot must already
+   be synced. The previous code is revoked; existing claims are kept
+   (`revoke_robot_claims()` ends them).
+2. The online app signs in **anonymously** (no email/phone) and calls
+   `claim_robot(code)` (authenticated only). It hashes the normalised code,
+   and on a match inserts the caller's `robot_claims` row. Failures are
+   recorded in `private.claim_attempts`: 5 per user and 30 overall per
+   15 minutes, then `rate-limited`. The client never names a robot id.
+3. `private.robot_claim_codes` and `private.claim_attempts` have RLS on and no
+   client (or direct service_role) grants.
+
+Cloud claim codes are separate from local pairing codes. Possession of the
+code is the deliberately limited single-owner credential, not multi-user
+authentication. The overall attempt limit means a guesser can temporarily
+block new claims; existing claims are unaffected. Tests:
+`supabase/tests/claim_flow.test.sql` (`npm run db:cloud:test`).
 
 ## Local validation (no hosted project involved)
 
