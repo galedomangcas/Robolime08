@@ -18,9 +18,10 @@ import {
 import { randomUUID } from 'node:crypto';
 
 import { bool, num, str, strOrNull, type Database, type Row } from '../db/connection';
+import { getDatabasePurpose } from '../db/init';
 import { systemClock, toCanonicalUtc, type Clock } from '../db/time';
 import { PairingAttemptLimiter } from '../pairing/rateLimit';
-import { DEFAULT_SESSION_TTL_DAYS, pairDevice, validateSession } from '../pairing/sessions';
+import { DEFAULT_SESSION_TTL_DAYS, DemoPairingError, pairDevice, validateSession } from '../pairing/sessions';
 import { getRun, listRunReadings } from '../store/readings';
 import { getRecommendationForRun } from '../store/recommendations';
 import { getActiveField, getRobot } from '../store/robots';
@@ -69,6 +70,12 @@ export interface LocalApiOptions {
   db: Database;
   clock?: Clock;
   sessionTtlDays?: number;
+  /**
+   * DEMO ONLY (D47): accept the fixed demo pairing code and its sessions.
+   * Off by default. Refused unless the database purpose is 'demo'; the HTTP
+   * layer additionally requires loopback binding.
+   */
+  demoPairing?: boolean;
 }
 
 const ERROR_STATUS: Record<ApiErrorCode, number> = {
@@ -162,6 +169,11 @@ export function createLocalApi(options: LocalApiOptions) {
   const { db } = options;
   const clock = options.clock ?? systemClock;
   const ttlDays = options.sessionTtlDays ?? DEFAULT_SESSION_TTL_DAYS;
+  const demoPairing = options.demoPairing === true;
+  if (demoPairing && getDatabasePurpose(db) !== 'demo') {
+    throw new DemoPairingError('Demo pairing is allowed only with a demo database (db:seed:demo); refusing to start.');
+  }
+  const pairingPolicy = { allowDemoCredential: demoPairing };
   // In memory, per API instance (one per gateway process): resets on restart (D30).
   const pairingLimiter = new PairingAttemptLimiter();
 
@@ -192,7 +204,7 @@ export function createLocalApi(options: LocalApiOptions) {
     if (!isRecord(req.body) || typeof req.body.pairingCode !== 'string' || req.body.pairingCode.length > 64) {
       return fail('BAD_REQUEST', 'Send {"pairingCode": "<code>"}.');
     }
-    const result = pairDevice(db, req.body.pairingCode, now, ttlDays);
+    const result = pairDevice(db, req.body.pairingCode, now, ttlDays, pairingPolicy);
     if (!result.ok) {
       if (result.error === 'INVALID_PAIRING_CODE') pairingLimiter.recordFailure(req.clientAddress, now);
       return fail(result.error);
@@ -281,7 +293,7 @@ export function createLocalApi(options: LocalApiOptions) {
       if (path === API_V1_ROUTES.pairing) {
         return handlePairing(req);
       }
-      const session = validateSession(db, bearerToken(req.authorization), clock());
+      const session = validateSession(db, bearerToken(req.authorization), clock(), pairingPolicy);
       if (!session.ok) {
         return fail(session.error);
       }

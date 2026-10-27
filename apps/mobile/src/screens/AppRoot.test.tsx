@@ -42,6 +42,9 @@ function fakeClient() {
       calls.status.push(token);
       return statusResults.shift() ?? ok({ status: STATUS, staleThresholdSeconds: 240 });
     },
+    runs: async () => ok({ runs: [] }),
+    runReadings: async () => ({ ok: false, failure: { kind: 'api', status: 404, code: 'NOT_FOUND', retryAfterSeconds: null } }),
+    runRecommendation: async () => ({ ok: false, failure: { kind: 'api', status: 404, code: 'NOT_FOUND', retryAfterSeconds: null } }),
   };
   return {
     client,
@@ -86,10 +89,10 @@ const allText = () => JSON.stringify(screen.toJSON());
 describe('AppRoot (local field mode)', () => {
   it('pairs, stores only the session, and opens the status screen', async () => {
     const { store, fake } = await renderApp(null);
-    expect(screen.getByText('Pair this device with the field gateway')).toBeTruthy();
+    expect(screen.getByText('Pair with your robot')).toBeTruthy();
 
     await act(async () => fireEvent.changeText(screen.getByLabelText('Pairing code'), ' ABCD-EFGH-JKMN '));
-    await act(async () => fireEvent.press(screen.getByRole('button', { name: 'Pair' })));
+    await act(async () => fireEvent.press(screen.getByRole('button', { name: 'Pair this device' })));
 
     expect(fake.calls.pair).toEqual(['ABCD-EFGH-JKMN']);
     expect(store.load()).toEqual({ token: 'new-token', robot: ROBOT, expiresAt: '2026-06-01T00:00:00.000Z' });
@@ -101,7 +104,7 @@ describe('AppRoot (local field mode)', () => {
     const { store, fake } = await renderApp(null);
     fake.setPairResult({ ok: false, failure: { kind: 'api', status: 401, code: 'INVALID_PAIRING_CODE', retryAfterSeconds: null } });
     await act(async () => fireEvent.changeText(screen.getByLabelText('Pairing code'), 'WRONG-CODE-1234'));
-    await act(async () => fireEvent.press(screen.getByRole('button', { name: 'Pair' })));
+    await act(async () => fireEvent.press(screen.getByRole('button', { name: 'Pair this device' })));
     expect(screen.getByText('That pairing code was not accepted. Check it and try again.')).toBeTruthy();
     expect(store.load()).toBeNull();
     expect(allText()).not.toContain('WRONG-CODE-1234');

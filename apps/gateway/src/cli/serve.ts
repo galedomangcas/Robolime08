@@ -8,6 +8,9 @@
  * is served at / only with --web-dir or GATEWAY_WEB_DIR (decision D33).
  * The serial bridge and cloud sync are NOT started by this command. Firewall
  * settings are never changed. Stop with Ctrl+C.
+ * DEMO ONLY (D47): --demo-pairing (or GATEWAY_DEMO_PAIRING=on) accepts the fixed
+ * demo pairing code; it requires loopback binding and a demo database, and is
+ * never for field use.
  */
 import { startGateway } from '../http/serve';
 import { fail, parseCli, resolveDbPath } from './args';
@@ -20,6 +23,7 @@ const args = parseCli({
   port: { type: 'string' },
   'web-dir': { type: 'string' },
   lan: { type: 'boolean' },
+  'demo-pairing': { type: 'boolean' },
 });
 const dbPath = resolveDbPath(args.db);
 
@@ -32,6 +36,7 @@ try {
     port: args.port,
     webDir: args['web-dir'],
     lan: args.lan, // undefined when the flag is absent: GATEWAY_LAN_MODE decides
+    demoPairing: args['demo-pairing'], // undefined when absent: GATEWAY_DEMO_PAIRING decides (default off)
     onRequest: ({ method, path, status, durationMs }) =>
       process.stdout.write(`${new Date().toISOString()} ${method} ${path} ${status} ${durationMs}ms\n`),
     onError: ({ errorName, method, path }) =>
@@ -69,7 +74,13 @@ const banner =
           : 'Web app not served (use --web-dir or GATEWAY_WEB_DIR to enable it).',
         'LAN access (--lan, decision D36), the serial bridge and cloud sync are not enabled by this command.',
       ];
-process.stdout.write([...banner, 'Press Ctrl+C to stop.', ''].join('\n'));
+const demoWarning = running.demoPairing
+  ? [
+      'DEMO PAIRING MODE (D47): the fixed, publicly known demo pairing code is accepted on this',
+      'synthetic demo database. Never use this mode, or that code, in a field deployment.',
+    ]
+  : [];
+process.stdout.write([...banner, ...demoWarning, 'Press Ctrl+C to stop.', ''].join('\n'));
 
 let stopping = false;
 function shutdown(signal: string): void {

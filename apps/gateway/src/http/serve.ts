@@ -3,7 +3,7 @@ import type { Database } from '../db/connection';
 import { openExistingDatabase } from '../db/init';
 import { migrate } from '../db/migrate';
 import type { Clock } from '../db/time';
-import { resolveHttpConfig, type GatewayBindMode, type NetworkInterfacesProvider } from './config';
+import { resolveDemoPairing, resolveHttpConfig, type GatewayBindMode, type NetworkInterfacesProvider } from './config';
 import { startGatewayHttpServer, type HttpErrorLog, type HttpRequestLog } from './server';
 import { loadStaticSite } from './static';
 
@@ -17,6 +17,8 @@ export interface ServeOptions {
   webDir?: string;
   /** `--lan`: true enables LAN mode (D36); absent defers to GATEWAY_LAN_MODE. */
   lan?: boolean;
+  /** `--demo-pairing` (D47, demo only): true enables it; absent defers to GATEWAY_DEMO_PAIRING (default off). */
+  demoPairing?: boolean;
   /** Tests only: interface list for the LAN-address assignment check. */
   networkInterfaces?: NetworkInterfacesProvider;
   /** Tests only: ephemeral port, bypassing the 1–65535 operator range. */
@@ -34,6 +36,8 @@ export interface RunningGateway {
   readonly port: number;
   /** True when the exported web app is served at the root URL. */
   readonly servesWebApp: boolean;
+  /** True only in the D47 demo pairing mode (loopback, demo database). */
+  readonly demoPairing: boolean;
   /** Closes the HTTP server first, then the database. Safe to call twice. */
   close(): Promise<void>;
   /** Drops in-flight connections; used only if a graceful close hangs. */
@@ -53,13 +57,14 @@ export async function startGateway(options: ServeOptions): Promise<RunningGatewa
     { host: options.host, port: options.port, webDir: options.webDir, lan: options.lan },
     { networkInterfaces: options.networkInterfaces },
   );
+  const demoPairing = resolveDemoPairing(options.env, options.demoPairing, config.mode);
   // Loaded before the database is opened, so a bad export fails fast.
   const staticSite = config.webDir === null ? undefined : loadStaticSite(config.webDir);
 
   const db: Database = openExistingDatabase(options.dbPath);
   try {
     migrate(db);
-    const api = createLocalApi({ db, clock: options.clock });
+    const api = createLocalApi({ db, clock: options.clock, demoPairing });
     const http = await startGatewayHttpServer({
       api,
       mode: config.mode,
@@ -78,6 +83,7 @@ export async function startGateway(options: ServeOptions): Promise<RunningGatewa
       host: http.host,
       port: http.port,
       servesWebApp: staticSite !== undefined,
+      demoPairing,
       close: () => {
         closing ??= http.close().finally(() => {
           if (db.isOpen) db.close();

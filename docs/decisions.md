@@ -1221,3 +1221,345 @@ functionality.
 **Unchanged:** `MANUAL_COMMANDS_APPROVED=false`, `RADIO_SCHEDULE=null`,
 `DEFAULT_GATEWAY_HOST='127.0.0.1'`, the hardware guard. No implementation,
 hardware, serial, radio, cloud or deployment work is authorised.
+
+## D42 — Clean replacement of the legacy hosted Supabase schema
+
+**Status: DECIDED (project owner, 2026-10-27).** The existing hosted project
+(`bkocxkavdosghmqjckty`) is kept; no replacement project is created. Its
+earlier RoboLime schema predates the locked cloud-mirror design and is
+replaced, not archived. The legacy RoboLime application data is disposable.
+The committed migrations are the source of truth.
+
+- **Cleanup migration:** `supabase/migrations/20261022000000_remove_legacy_hosted_schema.sql`
+  sorts before `20261023000000_cloud_mirror_initial.sql` (file order only;
+  it says nothing about any database's migration history). It drops only
+  legacy objects named in read-only hosted evidence: 3 views, 15 `public`
+  and 2 `private` tables, 2 sequences and all 9 legacy routines by exact
+  signature (the trigger `recommendations_dosing_runs_only` goes with
+  `public.recommendations`, and `private.pairing_attempts_id_seq` is
+  internally owned by its table).
+  It has no `CASCADE`, dynamic SQL, schema drop or privilege/publication
+  statement, and names no Supabase-managed schema. Dependants outside the
+  list make it fail rather than being removed. Its guard refuses to run when
+  target objects are detected (five target-only tables, `cloud_received_at`
+  on six colliding tables including the target's first table
+  `public.robots`, or the five target `private` functions); it does not
+  independently detect target-only `robot_claims`, `rule_crops` or
+  `rule_seasons`. The unverified 2026-10-25 dump files are not evidence for it.
+- **Hosted inventory (read-only SQL Editor checks supplied by the project
+  owner):** 9 routines in `public`/`private`; publication `supabase_realtime`
+  with `public.readings` and `public.robot_status`; no catalog dependants of
+  `public.paired_readings` or `private.hash_pairing_code(text)`; the only
+  dependant of `private.reject_verification_recommendation()` is the trigger
+  on `public.recommendations`; 0 rows in `private.pairing_attempts` and
+  `private.robot_pairing`. References inside PL/pgSQL bodies or dynamic SQL
+  are not visible to these checks.
+- **Backup:** `C:\Users\doman\RoboLime-backups\robolime-hosted-bkocxkavdosghmqjckty-20261027T093233Z-a69e04.dump`
+  (439,296 bytes, SHA-256 `2F9BF9347ADEACCA7ED1997F5CD5BA695AFB7BE48A323BF9705C82211BBC0D34`),
+  taken 2026-10-27 with a provenance record (archive coverage 23/23). It
+  has **not** been restored.
+- **Validation so far:** static tests (`apps/gateway/src/sync/cloudMigrations.test.ts`),
+  a PostgreSQL 17 grammar parse (`ecpg`), and one run of the throwaway-cluster
+  runner (`npm run db:cloud:test`, 2026-10-27) on a fresh database: the
+  cleanup changed nothing (all drops skipped), the target installed, and the
+  RLS tests passed.
+- **Limited database rehearsal (2026-10-27): passed.** The backup's `public`
+  and `private` schemas were restored into an isolated database-only container
+  of `supabase/postgres:17.11.0.006` on `127.0.0.1:55322`; both files ran in one
+  transaction (after a rolled-back run left the catalog unchanged); all legacy
+  objects were removed, the target installed, the cleanup's guard refused a
+  re-run, and the repository RLS test passed. Auth, Realtime, Storage and the
+  Data API were not running. Details: `PHASE4_final_report_20261027.md`.
+- **Apply kit (2026-10-27):** `C:\Users\doman\RoboLime-backups\phase4-apply-20261027\`
+  runs both files in one transaction with exact-manifest pre/post-checks, a
+  COMMIT only on operator confirmation, and read-only LEGACY/TARGET/OTHER
+  classification before and after. It was rehearsed end to end as the local
+  non-superuser `postgres` role. It does not write migration history
+  (`migration-history-plan.md` there).
+- **Not yet done:** nothing has been applied to the hosted project. That needs
+  an explicit project-owner decision to run the kit, and afterwards the
+  migration-history reconciliation in that plan. A version is recorded as
+  applied only after it actually ran.
+- **Unchanged:** offline field operation never depends on Supabase; the
+  target schema (gateway-only writes through `service_role`, claim-scoped
+  SELECT for `authenticated`, nothing for `anon`, no field selection or cell
+  features this semester).
+
+## D43 — Phase 5 scope (derived) and the local Results section (M5b)
+
+**Status: PROPOSED scope, implemented locally (2026-10-27); needs the project
+owner's confirmation.** No written Phase 5 acceptance criteria exist in the
+repository. The scope below is **derived** from `CLAUDE.md` §12 build-order
+item 5 ("Pairing, common monitoring strip, dashboard, and results screens
+using explicit local/cloud data adapters"), §4 and D29. It is not a prior
+agreement.
+
+- **Implemented (uncommitted):**
+  - `apps/mobile/src/data/dataSource.ts`: an explicit `FieldDataSource`
+    interface. Screens read status, runs, readings and recommendations only
+    through it. Only the local gateway adapter exists.
+  - The gateway client reads the existing read-only API routes `runs`,
+    `runs/:id/readings` and `runs/:id/recommendation` (no gateway change).
+  - Runtime validation of those answers. A verification run or verification
+    reading makes the whole answer invalid, so research data cannot reach
+    farmer-facing screens.
+  - A "Run results" section beside "Robot status". It lists dosing runs, then
+    shows one run's reading records (pH to two decimals, EC as stored with
+    "unit unconfirmed" (OPEN_ITEMS #7), moisture, temperature, commanded lime,
+    "expected post-correction pH", robot time) and its stored crop
+    recommendation (top five, reasons, rule-set version and status, inputs,
+    weather source). Synthetic, draft and retired rule sets carry a warning.
+    The Open-Meteo credit appears only when a forecast was used.
+  - The robot status card stays at the top of both sections, and polling
+    continues while switching.
+- **Judgement calls:** the run total of commanded lime is a display-only sum
+  of stored records, labelled "commanded". Results load on demand with
+  "Try again"; there is no polling. Runs are listed whether or not they are
+  finished, because the API has no per-run completion signal.
+- **Not done, and why:**
+  - Cloud adapter and online claim flow: OPEN_ITEMS #14, D42 (hosted schema
+    not applied), and no approved Supabase client dependency.
+  - A visually fixed (sticky) monitoring strip: the card scrolls with the
+    content. A compact strip is a design decision.
+  - Component self-check bits (#9) and battery health (#10).
+  - Field selection, cell map and cell-progress counts: excluded (D29).
+  - "Completed runs only": needs a per-run completion signal.
+  - The recommendation engine and sourced crop data (build-order item 6,
+    OPEN_ITEMS #5).
+  - Android, device and outdoor checks (checklist row 14).
+- **Unchanged:** observe-only (no command, dosing or expected-pH calculation in
+  the app), loopback only (D40), `MANUAL_COMMANDS_APPROVED=false`,
+  `RADIO_SCHEDULE=null`, no new dependency, no network or CDN use.
+
+## D44 — Firmware inspection: no telemetry contract exists yet (Phase 5)
+
+**Status: FINDINGS RECORDED (2026-10-27).** Documentation and tests only; no
+firmware, protocol definition, codec, gateway or app behaviour was changed.
+
+- **Source inspected:** GitHub `origin/main` at
+  `432d5b32de6c5d5de5d4836fa99d95a4477ed016` (confirmed with `git ls-remote`),
+  read from local git objects without checkout:
+  `Robot Code/Final Code/finalcode_sprint1_esp.ino` (blob `c56d0ce`),
+  `Robot Code/Final Code/finalcode_sprint1_nano.ino` (blob `7417af1`),
+  `Robot Code/Test Cases/SPRINT_1_Gateway.ino` (blob `3d5528e`, identical to
+  the local copy). Local `main` (`3e37db4`) has diverged from `origin/main`
+  (merge base `93c616d`): `origin/main` lacks the local Phase 1–4 commits, and
+  local `main` lacks the firmware upload. Nothing was pulled or merged.
+- **Verified behaviour:** the robot ESP32 sketch is a bench-test program:
+  - a USB-serial menu drives the BTS7960 motors (PWM 0–255)
+  - typed `ACTUATOR_*`/`PUMP_*`/`STOP_ALL` text is forwarded to the Nano,
+    which switches an L298N
+  - LoRa starts at 915 MHz in receive mode and only prints packets
+  - battery voltage is printed every 5 s
+- **Not present:** soil sensing, robot states 0–6, error or component flags,
+  run/cell/sequence identity, flash buffering, any LoRa transmission, and any
+  ACK. The receiver sketch sends `GET_ROBOT_STATUS` every 3 s (D38) and
+  forwards typed text over LoRa. Its `[Robolime] MSG:...` lines are hard-coded
+  samples, not received data.
+- **Consequences:**
+  - there is no firmware telemetry contract to align with
+  - the D22/D37 decision, the LoRa byte layout (OPEN_ITEMS #1) and real
+    integration (checklist row 12) remain blocked
+  - the app's displayed fields are not contradicted by the firmware, because
+    none are produced by it yet
+- **New open items:**
+  - #41: 915 MHz robot vs 433 MHz receiver and Ra-02 modules
+  - #42: telemetry not implemented
+  - #43: the ESP32–Nano handshake is incomplete, and the battery divider is
+    unconfirmed
+- **Tests added:**
+  - the receiver's exact text output yields no USB serial v1 frame
+  - the app client and data source expose only pairing plus GET reads
+- **Unchanged:** observe-only, `MANUAL_COMMANDS_APPROVED=false`,
+  `RADIO_SCHEDULE=null`, the unsigned codec gate, loopback only, synthetic-only
+  simulation.
+
+## D45 — Existing robot firmware is the Phase 5 baseline (not modified)
+
+**Status: DECIDED (project owner, 2026-10-27).** The firmware in
+`Robot Code/Final Code` on GitHub `main` at
+`432d5b32de6c5d5de5d4836fa99d95a4477ed016` is the approved firmware baseline:
+`finalcode_sprint1_esp.ino` (blob `c56d0ce`) and `finalcode_sprint1_nano.ino`
+(blob `7417af1`). The receiver sketch `Robot Code/Test Cases/SPRINT_1_Gateway.ino`
+(blob `3d5528e`) stays a test harness. Findings: D44,
+`PHASE5_firmware_alignment_report_20261027.md`.
+
+- **Not modified in Phase 5:** no firmware is rewritten, replaced or
+  reformatted. Any change needs a separate, explicitly approved firmware
+  revision.
+- **Software follows what the firmware demonstrably does.** It doesn't
+  transmit telemetry, so the gateway and app receive no robot data from it.
+  Nothing is assumed to exist that the source does not show (readings,
+  states, flags, ACKs, flash buffering, packet formats).
+- **Kept unchanged:**
+  - the LoRa codec stays unsigned (`UNSIGNED_LORA_CODEC` refuses real payloads)
+  - D22 serial validation is not loosened
+  - no text decoder is added for the receiver's hard-coded sample lines
+  - the app stays observe-only, with no app or cloud command or dosing path
+  - `MANUAL_COMMANDS_APPROVED=false` and `RADIO_SCHEDULE=null`
+- **Testing data:** application features keep using clearly labelled
+  synthetic data.
+- **Consequence for the field workflow (locked in `CLAUDE.md` §3, §6):** with
+  this baseline, the robot → receiver → USB → gateway → SQLite → ACK path
+  **cannot operate**:
+  - the robot never transmits (#42)
+  - robot and receiver use different frequencies (#41)
+  - there is no ACK, retention or record identity (#42)
+- **Integration status:** real robot integration (checklist rows 12–13) is
+  **not possible** with this baseline, and must not be described as
+  complete. This is a deliberate project limitation, not a software defect.
+  The manuscript's description of robot telemetry, write-before-ACK and
+  onboard buffering does not match this baseline and needs reconciliation by
+  the research team (OPEN_ITEMS #12).
+- **Observe-only note:** the baseline lets the robot be driven by a
+  USB-serial menu on the robot ESP32. The receiver sketch can forward typed
+  text over LoRa, which the robot only prints. Neither is an app or cloud
+  path. Whether these remain in field firmware is a team decision (D21).
+- **Not decided here:** the diverged `main` histories (D44) stay unresolved.
+
+## D46 — Status strip scrolls normally; Results lists all runs (Phase 5 UI)
+
+**Status: DECIDED (project owner, 2026-10-27).** This settles two questions
+D43 left open. D44 and D45 are unchanged.
+
+- **Status strip:** the robot status card is shown at the top of each section
+  after pairing (below the title, robot name and connection banner) and
+  **scrolls normally** with the page. It is not fixed or sticky. CLAUDE.md
+  §4's "pin the strip at the top of every screen" is satisfied in this sense.
+  No sticky layout is to be built.
+- **Results run list:** **all** dosing runs are listed, including incomplete
+  ones; nothing is filtered by completion. The data contract carries no run
+  status:
+  - the gateway `runs` table has no completion, failure or end-time column
+  - `RunSummary` has no status field
+  - `robot_status_reports` rows are not linked to a run
+
+  So every run carries the same honest label, "Run status: not reported by
+  the gateway". The list explains that runs may still be in progress or were
+  interrupted. Completion is never inferred from reading counts, timestamps
+  or the robot's current state. Distinguishing completed, incomplete or
+  failed runs needs a future, approved data-contract change (and firmware
+  that reports run boundaries, D45).
+- **Unchanged:** verification runs and readings stay hidden from farmer-facing
+  screens (validators reject them).
+
+## D47 — Temporary demo-only pairing code `10302026`
+
+**Status: DECIDED (project owner request, 2026-10-27). Demo use only.** The
+local UI may be previewed with the fixed code `10302026`. It is a
+**predictable, publicly known credential and must never be used in a field
+deployment.** Details and the preview procedure: `docs/local-gateway.md`,
+"Demo-only fixed pairing code".
+
+- **Off by default.** It is accepted only when all of these hold:
+  - the gateway runs with `--demo-pairing` or `GATEWAY_DEMO_PAIRING=on`
+    (strictly `on`/`off`)
+  - the gateway is bound to loopback (refused with LAN mode)
+  - the database purpose is `demo`
+  - the code was explicitly provisioned with
+    `pairing:provision --demo-code`, for a synthetic robot
+
+  Anything else fails closed. Nothing is provisioned, overwritten or revoked at
+  startup, and the code is never printed or logged.
+- **Normal mode unchanged:**
+  - random 60-bit codes, scrypt verifiers and the 10-character minimum are
+    kept for normal provisioning
+  - the demo verifier uses a domain-separated hash input that normal
+    verification cannot produce
+  - without demo mode, the demo credential is invisible and its sessions are
+    refused
+  - rate limiting, session validation and robot scoping apply in both modes
+- **No schema change:** the existing `verifier LIKE 'scrypt$%'` check is kept.
+  The demo credential is marked by a reserved label.
+- **Known limitation:** anyone with write access to the database file could
+  relabel credentials. That access already defeats local pairing, as before
+  (D15).
+
+## D48 — Online build target and Vercel configuration (no deployment)
+
+**Status: IMPLEMENTED LOCALLY (2026-10-27); deployment not authorised.**
+
+- **Problem:** the web build always ran the field pairing flow against its own
+  origin. Deployed on Vercel, it would call `/api/v1/pairing` on the Vercel
+  domain, get a 404 and show "Pairing failed (gateway error 404)". That
+  implies a field gateway exists online, which CLAUDE.md §5 forbids ("cloud
+  mode must report clearly when internet/cloud services are unavailable").
+- **Change:** a build-time `EXPO_PUBLIC_ROBOLIME_TARGET`:
+  - unset or `field` (default): unchanged laptop field build
+  - `online`: shows "Online access is not available yet" with no data and no
+    requests
+  - anything else: fails closed to a "misconfigured" notice
+- **Vercel:** `vercel.json` uses `npm ci`, builds with
+  `EXPO_PUBLIC_ROBOLIME_TARGET=online npm run build:web`, and outputs
+  `apps/mobile/dist`. It takes effect only when a commit containing it is
+  deployed.
+- **Unchanged:** no cloud data adapter, Supabase client or credential was
+  added. The online target becomes useful only after the claim flow (#14)
+  and the hosted schema apply (D42).
+- **Test reliability:** the intermittent mobile failure was diagnosed. The
+  first rendering test in each screen suite exceeded Jest's default 5 s
+  per-test timeout under CPU contention (reproduced on demand). The mobile Jest
+  `testTimeout` is now 30 s. No assertion changed. Under extreme load (suites
+  around 100 s) it can still time out.
+
+## D49 — Cloud read client and online-build safeguards (no claim flow, no deployment)
+
+**Status: IMPLEMENTED LOCALLY (2026-10-27).** It is not wired into any screen.
+The online build still shows "not available yet" (D48).
+
+- **Public configuration** (`apps/mobile/src/config/cloudConfig.ts`): reads
+  only `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`. It
+  accepts only an `https://<ref>.supabase.co` URL and a publishable key or
+  `anon` JWT for the same project. It refuses `sb_secret_` keys and JWTs whose
+  role is not `anon`. Every failure fails closed, and no value is echoed.
+- **Read client** (`apps/mobile/src/data/cloudReader.ts`):
+  - plain `fetch` to PostgREST, so no `@supabase/supabase-js` dependency
+  - **GET only**, and only when the user's own access token is present
+  - reads `robot_claims` (own claims) and the latest `robot_status_reports`
+    row for a UUID-validated robot
+  - RLS-hidden rows mean "no data", never a claim
+  - 401 is `auth-required` and 403 is `forbidden`
+  - every row is validated; component checks stay "unknown" (#9)
+- **Not built, because it needs a decision (OPEN_ITEMS #14):**
+  - how an online user signs in (anonymous sign-in is disabled; email and
+    phone are excluded by CLAUDE.md)
+  - how a `robot_claims` row is granted (today only `service_role` can write
+    it, and no claim function exists)
+
+  No session provider, sign-in, claim or RPC was invented.
+- **Build guard and Vercel headers:** see `docs/vercel-deployment.md`.
+- **Dependency:** `node-forge` 1.4.0 → 1.4.2, an in-range patch for
+  `@expo/cli`'s `^1.4.0`. The lockfile changed only in that entry, and it
+  clears GHSA-86w9-cpqp-85rv.
+
+## D50 — Canva mockups implemented in the existing app (visual layer only)
+
+**Status: IMPLEMENTED LOCALLY (2026-10-28).** Source:
+- `ui reference/RoboLime App Mockup.pdf`, 6 phone pages, SHA-256 `ed8559df…`
+- `ui reference/Web build (laptop-hosted, field LAN).pdf`, 1 laptop page,
+  SHA-256 `f173ebae…`
+
+The prompt's path `docs/ui-reference/robolime-ui-mockups.pdf` does not exist;
+these two files were used. No data contract, gateway, cloud or dependency
+changed.
+
+| Mockup | Implemented as | Deliberate differences |
+|---|---|---|
+| p1 Pairing | `PairingScreen` | "Field laptop found [LAPTOP-LAN-IP]" becomes "Field gateway on this computer" and "Pair this phone" becomes "Pair this device" (D40, D41). The decorative hero grid uses neutral greens, not pH colours |
+| p2 Field selection | not built | Excluded this semester (D29) |
+| p3 Field / dashboard | `StatusScreen` (Field section) + `StatusStrip` + bottom tabs | No "Working: x of y cells (z%)" or progress bar, no "x of y needed lime", and no field map (D29, D33). Self-check dots are outlined "Unknown" (#9). "Battery · health TBC" is kept (#10). The field name/area header is replaced by the robot name, because the app does not read the field |
+| p4 Cell sheet | `ReadingSheet`, opened from a reading in Results | Opened from the reading list, not a map. "Too acidic / Near target" is not shown (cut-off unconfirmed, #4); only "Below / At or above target 6.00". The gauge is a continuous blend with one marked target |
+| p5 Run results | `ResultsScreen` detail | No map or "Cells limed x of y"/"20/20 cells done" (D29). The median pH, conditions, weather note and top-5 crops come only from the stored recommendation. Score bars are relative to the top crop (the score scale is undefined) |
+| p6 Exports | `ExportsScreen` | Downloads are shown disabled with the `npm run export:csv` instruction (no HTTP route, D32). No counts or delivery percentages (#15) |
+| Web (laptop) | `SideNav` + wide `StatusStrip` + readings table | "Field laptop · local network" becomes the connection pill. "Cloud sync … queued" is omitted (no API). The map is omitted (D29) |
+
+- **No new dependency:** icons are drawn with views, the hero gradient is a
+  solid colour with stripes, and the system font is used (the font file was
+  not supplied).
+- **Responsive:** phones get bottom tabs; at a width of 900 or more there is a
+  side rail and the readings table (`WIDE_BREAKPOINT`).
+- **Unchanged:**
+  - observe-only, no new requests
+  - the online build still shows "not available yet" (D48)
+  - the cloud reader is not wired in
+  - the status strip scrolls normally (D46)

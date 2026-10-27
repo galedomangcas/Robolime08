@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+
+import { createLocalGatewayDataSource } from '../data/dataSource';
 
 import type { GatewayClient } from '../data/gatewayClient';
 import type { SessionStore, StoredSession } from '../data/sessionStore';
@@ -16,13 +18,15 @@ interface AppRootProps {
 const SESSION_ENDED_NOTICE = 'The gateway no longer accepts this device’s pairing (it expired or was replaced). Pair again.';
 
 /**
- * Pairing ⇄ status. A stored session opens the status screen straight away,
+ * Pairing ⇄ paired view (status strip + status / results sections). A stored session opens the status screen straight away,
  * even if the gateway is unreachable (field use must not lock the user out);
  * it is cleared only when the gateway itself rejects it.
  */
 export function AppRoot({ client, store, now, timers }: AppRootProps) {
   const [session, setSession] = useState<StoredSession | null>(() => store.load());
   const [notice, setNotice] = useState<string | null>(null);
+  // Field mode only: the local gateway adapter (no cloud adapter exists yet).
+  const dataSource = useMemo(() => createLocalGatewayDataSource(client), [client]);
 
   if (session === null) {
     return (
@@ -40,7 +44,7 @@ export function AppRoot({ client, store, now, timers }: AppRootProps) {
 
   return (
     <StatusScreen
-      client={client}
+      dataSource={dataSource}
       session={session}
       now={now}
       timers={timers}

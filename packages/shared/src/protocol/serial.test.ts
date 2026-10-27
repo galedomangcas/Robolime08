@@ -225,3 +225,45 @@ describe('SerialFrameIdCounter', () => {
     expect([counter.take(), counter.take(), counter.take()]).toEqual([0xfffd, 0xfffe, 0]);
   });
 });
+
+/**
+ * Regression guard from the firmware inspection of 2026-10-27 (D44): the only
+ * receiver sketch, `Robot Code/Test Cases/SPRINT_1_Gateway.ino` (origin/main
+ * 432d5b3), writes human-readable text lines at 115200 baud. Its
+ * "[Robolime] MSG:..." lines are HARD-CODED sample strings printed on a timer
+ * (lines 34 and 49), not data received from the robot. None of this output may
+ * ever be accepted as a USB serial v1 frame.
+ */
+describe('Sprint 1 receiver text output (not a serial v1 stream)', () => {
+  const SPRINT1_OUTPUT = [
+    '[Gateway] Initializing LoRa...',
+    '[Gateway] LoRa Initialized Successfully!',
+    '[Robolime] MSG:ROBOT_STATUS,STATE:ACTIVE,ERR:0,BATTERY:88,TOTAL_LIME:120.5,TS:1771920000',
+    '[Gateway] Sending manual command: get_pH',
+    '[Robolime] MSG:SOIL_STATUS,PH:6.52,EC:1.20,MOISTURE:42.5,TEMP:24.1,LIME:15.0,LAT:14.5995,LON:120.9842,FLAG:0',
+    '[Gateway] Received --> hello',
+  ]
+    .map((line) => `${line}\r\n`)
+    .join('');
+
+  it('yields no frame, however much text arrives', () => {
+    const reader = new SerialFrameReader();
+    const events: SerialReadEvent[] = [];
+    for (let i = 0; i < 20; i++) events.push(...reader.push(ascii(SPRINT1_OUTPUT)));
+    expect(frames(events)).toEqual([]);
+    // Text never contains the 0x00 delimiter, so the reader only reports bounded OVERSIZED errors.
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => e.kind === 'error' && e.error.code === 'OVERSIZED')).toBe(true);
+    expect(reader.pendingBytes).toBeLessThanOrEqual(SERIAL_MAX_STUFFED_FRAME_BYTES);
+  });
+
+  it('rejects each line even if something delimited it with 0x00', () => {
+    for (const line of SPRINT1_OUTPUT.split('\r\n').filter((l) => l.length > 0)) {
+      const reader = new SerialFrameReader();
+      const events = reader.push(Uint8Array.from([...ascii(line), SERIAL_FRAME_DELIMITER]));
+      expect(frames(events)).toEqual([]);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.kind).toBe('error');
+    }
+  });
+});

@@ -200,3 +200,34 @@ export function resolveHttpConfig(
   }
   return { mode: 'lan', host: parseLanAddress(host, deps.networkInterfaces), ...common };
 }
+
+/**
+ * DEMO ONLY (decision D47): `GATEWAY_DEMO_PAIRING` (`on`/`off`, default off)
+ * or `--demo-pairing`. When on, the gateway accepts the fixed, publicly known
+ * demo pairing code provisioned in a demo database. Refused (fail closed) for
+ * any value other than on/off, and in LAN mode: the predictable code must
+ * never be reachable from a network. The 'demo' database purpose is checked
+ * by the local API when it starts.
+ */
+export function resolveDemoPairing(
+  env: Readonly<Record<string, string | undefined>>,
+  override: boolean | undefined,
+  mode: GatewayBindMode,
+): boolean {
+  const raw = env.GATEWAY_DEMO_PAIRING;
+  let fromEnv = false;
+  if (present(raw)) {
+    const value = raw.trim().toLowerCase();
+    if (value !== 'on' && value !== 'off') {
+      throw new GatewayConfigError('GATEWAY_DEMO_PAIRING must be "on" or "off".');
+    }
+    fromEnv = value === 'on';
+  }
+  const enabled = override === true || fromEnv;
+  if (enabled && mode !== 'loopback') {
+    throw new GatewayConfigError(
+      'Demo pairing (D47) is loopback-only and cannot be combined with LAN mode. Nothing was started.',
+    );
+  }
+  return enabled;
+}

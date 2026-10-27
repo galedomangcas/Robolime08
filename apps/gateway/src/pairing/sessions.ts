@@ -1,8 +1,16 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
-import { str, strOrNull, withTransaction, type Database } from '../db/connection';
+import { bool, str, strOrNull, withTransaction, type Database } from '../db/connection';
+import { getDatabasePurpose } from '../db/init';
 import { toCanonicalUtc } from '../db/time';
-import { generatePairingCode, hashPairingCode, verifyPairingCode, type ScryptParams } from './codes';
+import {
+  generatePairingCode,
+  hashDemoPairingCode,
+  hashPairingCode,
+  verifyDemoPairingCode,
+  verifyPairingCode,
+  type ScryptParams,
+} from './codes';
 
 /**
  * Local (offline) pairing. Possession of the pairing code is the deliberately
@@ -14,6 +22,38 @@ import { generatePairingCode, hashPairingCode, verifyPairingCode, type ScryptPar
  */
 export const DEFAULT_SESSION_TTL_DAYS = 90;
 const TOKEN_PREFIX = 'rlg1';
+
+/**
+ * Reserved label of the demo-only credential (D47). Credentials with this label
+ * are ignored, and sessions created from them are refused, unless demo pairing
+ * is explicitly enabled. Normal provisioning refuses this label.
+ */
+export const DEMO_CREDENTIAL_LABEL = 'demo-only fixed code (D47) - never for field use';
+
+export class DemoPairingError extends Error {
+  override name = 'DemoPairingError';
+}
+
+/** Demo pairing is off unless a caller explicitly enables it (D47). */
+export interface PairingPolicy {
+  allowDemoCredential?: boolean;
+}
+
+function insertActiveCredential(db: Database, robotId: string, verifier: string, label: string, now: Date): string {
+  const credentialId = randomUUID();
+  const nowText = toCanonicalUtc(now);
+  withTransaction(db, () => {
+    db.prepare('UPDATE pairing_credentials SET revoked_at = ? WHERE robot_id = ? AND revoked_at IS NULL').run(nowText, robotId);
+    db.prepare(`INSERT INTO pairing_credentials (id, robot_id, verifier, label, created_at) VALUES (?, ?, ?, ?, ?)`).run(
+      credentialId,
+      robotId,
+      verifier,
+      label,
+      nowText,
+    );
+  });
+  return credentialId;
+}
 
 export interface ProvisionedCredential {
   credentialId: string;
@@ -30,20 +70,35 @@ export function provisionPairingCredential(
   db: Database,
   options: { robotId: string; code?: string; label?: string; now: Date; scryptParams?: ScryptParams },
 ): ProvisionedCredential {
+  if (options.label === DEMO_CREDENTIAL_LABEL) {
+    throw new DemoPairingError('That label is reserved for the demo-only credential.');
+  }
   const code = options.code ?? generatePairingCode();
   const verifier = hashPairingCode(code, options.scryptParams);
-  const credentialId = randomUUID();
-  const nowText = toCanonicalUtc(options.now);
-  withTransaction(db, () => {
-    db.prepare('UPDATE pairing_credentials SET revoked_at = ? WHERE robot_id = ? AND revoked_at IS NULL').run(
-      nowText,
-      options.robotId,
-    );
-    db.prepare(
-      `INSERT INTO pairing_credentials (id, robot_id, verifier, label, created_at) VALUES (?, ?, ?, ?, ?)`,
-    ).run(credentialId, options.robotId, verifier, options.label ?? '', nowText);
-  });
+  const credentialId = insertActiveCredential(db, options.robotId, verifier, options.label ?? '', options.now);
   return { credentialId, generatedCode: options.code === undefined ? code : null };
+}
+
+/**
+ * DEMO ONLY (D47): makes the fixed `DEMO_PAIRING_CODE` the robot's active
+ * credential, revoking the previous one exactly as normal provisioning does.
+ * An explicit operator action; never run at gateway startup. Refuses unless
+ * the database purpose is 'demo' and the robot is synthetic. The code is
+ * never returned or printed.
+ */
+export function provisionDemoPairingCredential(
+  db: Database,
+  options: { robotId: string; now: Date; scryptParams?: ScryptParams },
+): { credentialId: string } {
+  if (getDatabasePurpose(db) !== 'demo') {
+    throw new DemoPairingError('The demo pairing code can only be provisioned in a demo database (db:seed:demo).');
+  }
+  const robot = db.prepare('SELECT is_synthetic FROM robots WHERE id = ?').get(options.robotId);
+  if (robot === undefined || !bool(robot, 'is_synthetic')) {
+    throw new DemoPairingError('The demo pairing code can only be provisioned for a synthetic robot.');
+  }
+  const verifier = hashDemoPairingCode(options.scryptParams);
+  return { credentialId: insertActiveCredential(db, options.robotId, verifier, DEMO_CREDENTIAL_LABEL, options.now) };
 }
 
 export type PairResult =
@@ -56,14 +111,21 @@ export function pairDevice(
   pairingCode: string,
   now: Date,
   ttlDays: number = DEFAULT_SESSION_TTL_DAYS,
+  policy: PairingPolicy = {},
 ): PairResult {
+  // A demo credential does not exist as far as normal mode is concerned (D47).
   const credentials = db
-    .prepare('SELECT id, robot_id, verifier FROM pairing_credentials WHERE revoked_at IS NULL')
-    .all();
+    .prepare('SELECT id, robot_id, verifier, label FROM pairing_credentials WHERE revoked_at IS NULL')
+    .all()
+    .filter((c) => policy.allowDemoCredential === true || str(c, 'label') !== DEMO_CREDENTIAL_LABEL);
   if (credentials.length === 0) {
     return { ok: false, error: 'NO_PAIRING_PROVISIONED' };
   }
-  const match = credentials.find((c) => verifyPairingCode(pairingCode, str(c, 'verifier')));
+  const match = credentials.find((c) =>
+    str(c, 'label') === DEMO_CREDENTIAL_LABEL
+      ? verifyDemoPairingCode(pairingCode, str(c, 'verifier'))
+      : verifyPairingCode(pairingCode, str(c, 'verifier')),
+  );
   if (!match) {
     return { ok: false, error: 'INVALID_PAIRING_CODE' };
   }
@@ -92,7 +154,12 @@ function sha256Hex(value: string): string {
 }
 
 /** Validates a bearer token and returns the single robot it may read. */
-export function validateSession(db: Database, token: string | null | undefined, now: Date): SessionCheck {
+export function validateSession(
+  db: Database,
+  token: string | null | undefined,
+  now: Date,
+  policy: PairingPolicy = {},
+): SessionCheck {
   if (!token) {
     return { ok: false, error: 'UNPAIRED' };
   }
@@ -103,7 +170,7 @@ export function validateSession(db: Database, token: string | null | undefined, 
   const [, sessionId, secret] = parts as [string, string, string];
   const row = db
     .prepare(
-      `SELECT s.robot_id, s.token_hash, s.expires_at, s.revoked_at, c.revoked_at AS credential_revoked_at
+      `SELECT s.robot_id, s.token_hash, s.expires_at, s.revoked_at, c.revoked_at AS credential_revoked_at, c.label AS credential_label
        FROM local_sessions AS s JOIN pairing_credentials AS c ON c.id = s.pairing_credential_id
        WHERE s.id = ?`,
     )
@@ -117,6 +184,10 @@ export function validateSession(db: Database, token: string | null | undefined, 
     return { ok: false, error: 'INVALID_SESSION' };
   }
   if (strOrNull(row, 'revoked_at') !== null || strOrNull(row, 'credential_revoked_at') !== null) {
+    return { ok: false, error: 'SESSION_REVOKED' };
+  }
+  // A session paired with the demo code is not valid once demo pairing is off (D47).
+  if (str(row, 'credential_label') === DEMO_CREDENTIAL_LABEL && policy.allowDemoCredential !== true) {
     return { ok: false, error: 'SESSION_REVOKED' };
   }
   const expiresAt = str(row, 'expires_at');

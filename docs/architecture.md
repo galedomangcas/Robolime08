@@ -162,7 +162,8 @@ mapping, RLS, type generation).
 | Pairing-attempt rate limiting (5 failures per client IP per 15 min, in memory) | Phase 4 M2 — implemented and tested on loopback only (D30); not tested on a LAN or phone |
 | Cloud-mirror schema, RLS, generated types | Phase 2 — tested on a throwaway local PostgreSQL; **not applied to hosted Supabase** |
 | Synthetic demo seed (SQLite + generated cloud SQL with the same IDs) | Phase 2 — implemented and tested |
-| Local/cloud data-source adapters in the app | Not started (Phase 5) |
+| Local/cloud data-source adapters in the app | Phase 5 (D43): the **local** adapter is implemented (`apps/mobile/src/data/dataSource.ts`; status, runs, readings and recommendations go through it). The **cloud** adapter is **not implemented**: blocked on the online claim flow (OPEN_ITEMS #14), the hosted schema (D42) and an approved Supabase client dependency |
+| Web app: Results section (dosing runs, per-reading pH/EC/moisture/temperature, commanded lime, expected post-correction pH, stored crop recommendation) | Phase 5 (D43, D46) — implemented, uncommitted; unit/screen tests and a headless-Edge check on loopback with synthetic data (2026-10-27). Lists all dosing runs with the label "Run status: not reported by the gateway" (no run status exists in the contract); the status card scrolls with the page (D46). No cell map, field selection or cell-progress counts (D29). Not tested on a device, outdoors, with hardware or online |
 | USB serial contract v1 (COBS + CRC-16 framing, streaming reader) | Phase 3 — implemented and tested in software; **proposed** until bridge firmware + loopback test |
 | LoRa contract v1 (logical messages, validation, size limit, codec boundary) | Phase 3 — implemented and tested; **byte layout not signed off**, so the real codec refuses to decode/encode |
 | Write-before-ACK uplink handling + bridge protocol session | Phase 3 — implemented and tested with the simulator (no serial port, no timers) |
@@ -488,6 +489,20 @@ When multi-screen navigation is added, a rewrite of unknown paths to
 `/index.html` (or Expo Router static output) will also be needed. Until the
 Expo build is actually deployed there, the current Vercel site must not be
 described as the RoboLime app.
+
+**Later status (D48, 2026-10-27):** the repository's `vercel.json` now carries
+these settings, with one change: the build command is
+`EXPO_PUBLIC_ROBOLIME_TARGET=online npm run build:web`. The online build shows
+"Online access is not available yet" and makes no requests, because the cloud
+data adapter does not exist (OPEN_ITEMS #14). The file takes effect only when a
+commit containing it is deployed.
+- **Not yet done:** nothing has been deployed, and the hosted project's
+  dashboard settings were not inspected (no Vercel CLI or link on this machine).
+- **No rewrite needed yet:** navigation is state-based (D5), so there is one
+  `index.html` and no URL routes.
+- **CSP:** the gateway sends a CSP with style hashes computed at startup.
+  `vercel.json` now sets a static CSP and security headers (D49,
+  `docs/vercel-deployment.md`); they need a post-deploy browser check.
 
 ## Local (laptop) web hosting
 

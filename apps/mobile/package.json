@@ -25,10 +25,11 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "build:web": "expo export --platform web"
+    "build:web": "node scripts/check-build-target.mjs && expo export --platform web"
   },
   "private": true,
   "jest": {
-    "preset": "jest-expo"
+    "preset": "jest-expo",
+    "testTimeout": 30000
   }
 }

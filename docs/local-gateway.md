@@ -216,6 +216,53 @@ loopback.)
   semester on a trusted, password-protected field network only (never the
   public internet). Anyone with the laptop's disk can read the stored data.
 
+### Demo-only fixed pairing code (decision D47)
+
+> **`10302026` is a predictable, publicly known demonstration credential.
+> Never use it, or demo pairing mode, in a field deployment or with a field
+> database.**
+
+It exists so the local UI can be previewed with a known code. It is accepted
+only when **all** of these hold. Anything else fails closed: the gateway
+refuses to start, or the code is rejected.
+
+- The database purpose is `demo` (created by `db:seed:demo`). Provisioning
+  refuses a `field` database, and so does `serve --demo-pairing`.
+- The robot is synthetic.
+- An operator provisioned it explicitly:
+  `pairing:provision ... --demo-code`. Like normal provisioning, this revokes
+  the robot's previous credential and its sessions. Nothing is provisioned at
+  gateway startup, and the code is never printed.
+- The gateway runs with `--demo-pairing` or `GATEWAY_DEMO_PAIRING=on`
+  (default off; any value other than `on` or `off` is an error), bound to
+  loopback. Combining it with LAN mode is refused.
+
+How normal mode stays protected:
+
+- The demo verifier is stored in the normal salted scrypt format, but its hash
+  input carries a lowercase domain prefix that normal verification can never
+  produce, because it upper-cases every input. So the demo code can never match
+  through normal pairing.
+- Normal provisioning still refuses codes shorter than 10 characters, so
+  `10302026` cannot be provisioned as an ordinary code.
+- Without demo mode, the demo credential is invisible to pairing
+  (`NO_PAIRING_PROVISIONED`). Sessions paired with it are refused as
+  `SESSION_REVOKED`. Its reserved label cannot be used by normal provisioning.
+- Rate limiting, session validation and robot scoping are unchanged in demo
+  mode.
+
+Preview procedure (loopback only, on a new throwaway file):
+
+```
+npm run build:web
+npm run db:seed:demo -w @robolime/gateway -- --db <new-demo-file>
+npm run pairing:provision -w @robolime/gateway -- --db <new-demo-file> --robot SYNTHETIC-DEMO-ROBOT --demo-code
+npm run serve -w @robolime/gateway -- --db <new-demo-file> --demo-pairing --web-dir <ABSOLUTE path to apps/mobile/dist>
+```
+
+Open `http://127.0.0.1:8780/` on the same computer and enter `10302026`.
+Delete the demo file afterwards.
+
 ### Pairing-attempt rate limiting (decision D30)
 
 - **Policy:** at most **5 failed pairing attempts per client IP address within

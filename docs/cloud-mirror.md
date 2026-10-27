@@ -15,6 +15,7 @@ internet is available. Field operation never depends on it.
 | Path | Purpose |
 |---|---|
 | `supabase/config.toml` | Local Supabase CLI config from `supabase init` (local stack only; seeds the synthetic demo on local `db reset`) |
+| `supabase/migrations/20261022000000_remove_legacy_hosted_schema.sql` | Removes the legacy hosted RoboLime objects before the target is installed (D42); designed to change nothing on a fresh database (not yet run) |
 | `supabase/migrations/20261023000000_cloud_mirror_initial.sql` | Cloud schema, integrity triggers, grants, RLS |
 | `supabase/seeds/demo_synthetic.sql` | **Generated** synthetic demo seed (same IDs as the SQLite demo) |
 | `supabase/tests/rls_robot_scope.test.sql` | Migration + RLS assertions (runs in a rolled-back transaction) |
@@ -236,6 +237,37 @@ npx supabase@2.121.0 db reset         # LOCAL: applies migrations + synthetic se
 psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -v ON_ERROR_STOP=1 -f supabase/tests/rls_robot_scope.test.sql
 npx supabase@2.121.0 gen types typescript --local --schema public
 ```
+
+## Legacy hosted schema cleanup (D42)
+
+The hosted project already holds an earlier RoboLime schema whose table names
+collide with the target migration. `20261022000000_remove_legacy_hosted_schema.sql`
+drops only the legacy objects found by read-only hosted catalog checks
+(3 views, 17 tables, 2 sequences, all 9 legacy routines), by explicit name
+and routine signature, with no `CASCADE` or dynamic SQL. Its guard refuses
+to run when target objects are detected (see the migration header for the
+exact checks and the one undetected case). Objects outside its list that
+depend on a listed object make it fail instead of being removed. Its safety
+properties and the target's authorization scope are pinned by static tests
+in `apps/gateway/src/sync/cloudMigrations.test.ts`; those read the SQL text
+only and do not prove that it executes.
+
+It has run once, on a fresh throwaway database (`npm run db:cloud:test`,
+2026-10-27): every drop was skipped, the target installed and the RLS tests
+passed. A limited database-level rehearsal on 2026-10-27 then restored the
+legacy `public`/`private` schemas from the hosted backup into an isolated
+`supabase/postgres:17.11.0.006` container and ran both files in one
+transaction successfully (`PHASE4_final_report_20261027.md`); Supabase
+services were not running, and nothing was applied to the hosted project.
+Both local runners
+(`run-local-postgres.mjs`, `run-sync-integration.mjs`) apply every file in
+`migrations/` in file-name order with plain `psql -f`, without a wrapping
+transaction or a history table, so their next run would apply it first.
+File-name order is not migration history: how a Supabase CLI or other tool
+records versions on the hosted project (which has no history table) is
+unverified. Before any hosted run, rehearse on a separate approved
+environment, after a provenance-recorded backup, applying both files in one
+transaction.
 
 ## Production restrictions
 

@@ -2,11 +2,18 @@ import {
   ERROR_FLAG_BITS,
   ROBOT_COMPONENTS,
   ROBOT_STATE_BY_CODE,
+  type CellReading,
   type ComponentCheck,
+  type CropRecommendation,
+  type CropScore,
   type PairingResponse,
   type RobotStatus,
   type RobotStatusResponse,
   type RobotSummary,
+  type RunReadingsResponse,
+  type RunRecommendationResponse,
+  type RunsResponse,
+  type RunSummary,
   type SessionResponse,
 } from '@robolime/shared';
 
@@ -124,4 +131,123 @@ export function isPairingResponse(v: unknown): v is PairingResponse {
 
 export function isSessionResponse(v: unknown): v is SessionResponse {
   return isObject(v) && isRobotSummary(v.robot) && isIsoDateTime(v.expiresAt);
+}
+
+const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every(isString);
+const isNullableIso = (v: unknown) => v === null || isIsoDateTime(v);
+
+function isTimestamps(v: unknown): boolean {
+  return (
+    isObject(v) && isIsoDateTime(v.robotAt) && isNullableIso(v.gatewayReceivedAt) && isNullableIso(v.cloudSyncedAt)
+  );
+}
+
+/**
+ * Farmer-facing run summary. Only dosing runs are accepted: a verification run
+ * is research data and must never reach these screens (CLAUDE.md §4 Screen 4).
+ */
+export function isRunSummary(v: unknown): v is RunSummary {
+  return (
+    isObject(v) &&
+    isString(v.id) &&
+    isString(v.sourceRunId) &&
+    v.runType === 'dosing' &&
+    (v.fieldId === null || isString(v.fieldId)) &&
+    isFiniteNumber(v.readingCount) &&
+    isNullableIso(v.firstRobotRecordedAt) &&
+    isNullableIso(v.lastRobotRecordedAt) &&
+    typeof v.isSynthetic === 'boolean'
+  );
+}
+
+export function isRunsResponse(v: unknown): v is RunsResponse {
+  return isObject(v) && Array.isArray(v.runs) && v.runs.every(isRunSummary);
+}
+
+/** A reading from a verification run is rejected outright (the whole answer becomes invalid). */
+export function isCellReading(v: unknown): v is CellReading {
+  if (!isObject(v)) return false;
+  const { gps } = v;
+  return (
+    isString(v.runId) &&
+    v.runType === 'dosing' &&
+    isFiniteNumber(v.cellIndex) &&
+    isFiniteNumber(v.seq) &&
+    isFiniteNumber(v.attemptCount) &&
+    isFiniteNumber(v.ph) &&
+    isFiniteNumber(v.ec) &&
+    isFiniteNumber(v.moisturePercent) &&
+    isFiniteNumber(v.temperatureC) &&
+    isFiniteNumber(v.doseVolumeMl) &&
+    (v.expectedPostCorrectionPh === null || isFiniteNumber(v.expectedPostCorrectionPh)) &&
+    (gps === null || (isObject(gps) && isFiniteNumber(gps.latitude) && isFiniteNumber(gps.longitude))) &&
+    isFiniteNumber(v.rawFlags) &&
+    isTimestamps(v.timestamps)
+  );
+}
+
+export function isRunReadingsResponse(v: unknown): v is RunReadingsResponse {
+  return isObject(v) && isRunSummary(v.run) && Array.isArray(v.readings) && v.readings.every(isCellReading);
+}
+
+function isCropScore(v: unknown): v is CropScore {
+  return (
+    isObject(v) &&
+    isString(v.cropId) &&
+    isString(v.cropName) &&
+    isString(v.category) &&
+    isFiniteNumber(v.score) &&
+    isStringArray(v.reasons)
+  );
+}
+
+const WEATHER_SOURCES: ReadonlySet<unknown> = new Set(['forecast', 'seasonal-defaults']);
+const RULE_SET_STATUSES: ReadonlySet<unknown> = new Set(['draft', 'approved', 'retired']);
+
+function isCropRecommendation(v: unknown): v is CropRecommendation {
+  if (!isObject(v)) return false;
+  const { inputs } = v;
+  return (
+    isString(v.id) &&
+    isString(v.runId) &&
+    isString(v.ruleSetVersion) &&
+    isObject(inputs) &&
+    isFiniteNumber(inputs.medianPh) &&
+    isFiniteNumber(inputs.medianEc) &&
+    isFiniteNumber(inputs.medianMoisturePercent) &&
+    isFiniteNumber(inputs.medianTemperatureC) &&
+    isString(inputs.season) &&
+    WEATHER_SOURCES.has(inputs.weatherSource) &&
+    isObject(inputs.weather) &&
+    Object.values(inputs.weather).every(isFiniteNumber) &&
+    Array.isArray(v.allScores) &&
+    v.allScores.every(isCropScore) &&
+    Array.isArray(v.shortlist) &&
+    v.shortlist.every(isCropScore) &&
+    isIsoDateTime(v.computedAt)
+  );
+}
+
+export function isRunRecommendationResponse(v: unknown): v is RunRecommendationResponse {
+  return (
+    isObject(v) &&
+    isCropRecommendation(v.recommendation) &&
+    RULE_SET_STATUSES.has(v.ruleSetStatus) &&
+    typeof v.isSynthetic === 'boolean'
+  );
+}
+
+/**
+ * Identity checks for the run-scoped routes. A structurally valid answer is
+ * still rejected if it describes a different run from the one requested, so
+ * one run's records can never be shown under another run's title. Run ids are
+ * the gateway's opaque ids (`RunSummary.id`, also used as `CellReading.runId`
+ * and `CropRecommendation.runId`).
+ */
+export function isReadingsForRun(v: RunReadingsResponse, requestedRunId: string): boolean {
+  return v.run.id === requestedRunId && v.readings.every((reading) => reading.runId === requestedRunId);
+}
+
+export function isRecommendationForRun(v: RunRecommendationResponse, requestedRunId: string): boolean {
+  return v.recommendation.runId === requestedRunId;
 }

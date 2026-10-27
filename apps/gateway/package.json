@@ -2,7 +2,7 @@
   "name": "@robolime/gateway",
   "version": "0.1.0",
   "private": true,
-  "description": "RoboLime offline-first field gateway: durable SQLite store, local pairing, read-only local API, protocol session and simulator (no serial port or HTTP server yet).",
+  "description": "RoboLime offline-first field gateway: durable SQLite store, local pairing, read-only local API over a loopback HTTP server (opt-in LAN mode), protocol session, simulator and cloud sync worker (no serial-port adapter yet).",
   "type": "module",
   "engines": {
     "node": "^22.16.0 || ^24.0.0 || >=26.0.0"

@@ -90,4 +90,75 @@ describe('gateway client', () => {
     expect(isSessionInvalid({ kind: 'timeout' })).toBe(false);
     expect(isSessionInvalid({ kind: 'unreachable' })).toBe(false);
   });
+
+  it('reads runs, readings and recommendations with the bearer token and an encoded run id', async () => {
+    const { fetch, calls } = fakeFetch({ status: 200, body: { runs: [] } });
+    const client = createGatewayClient({ baseUrl: '', fetch });
+    expect((await client.runs('tok')).ok).toBe(true);
+    await client.runReadings('tok', 'run/1 x');
+    await client.runRecommendation('tok', 'run/1 x');
+    expect(calls.map((c) => c.url)).toEqual([
+      API_V1_ROUTES.runs,
+      '/api/v1/runs/run%2F1%20x/readings',
+      '/api/v1/runs/run%2F1%20x/recommendation',
+    ]);
+    expect(calls.every((c) => c.method === 'GET' && c.headers.Authorization === 'Bearer tok')).toBe(true);
+  });
+
+  it('reports a verification run in a runs answer as an invalid response', async () => {
+    const run = {
+      id: 'v', sourceRunId: 'V', runType: 'verification', fieldId: null, readingCount: 0,
+      firstRobotRecordedAt: null, lastRobotRecordedAt: null, isSynthetic: true,
+    };
+    const { fetch } = fakeFetch({ status: 200, body: { runs: [run] } });
+    expect(await createGatewayClient({ baseUrl: '', fetch }).runs('tok')).toEqual({ ok: false, failure: { kind: 'invalid-response' } });
+  });
+
+  it('reports a missing recommendation as NOT_FOUND', async () => {
+    const { fetch } = fakeFetch({ status: 404, body: { error: { code: 'NOT_FOUND', message: 'none' } } });
+    expect(await createGatewayClient({ baseUrl: '', fetch }).runRecommendation('tok', 'r')).toEqual({
+      ok: false,
+      failure: { kind: 'api', status: 404, code: 'NOT_FOUND', retryAfterSeconds: null },
+    });
+  });
+
+  it('is observe-only: every call except pairing is a bodiless GET, and no route can command the robot', async () => {
+    const { fetch, calls } = fakeFetch({ status: 200, body: {} });
+    const client = createGatewayClient({ baseUrl: '', fetch });
+    expect(Object.keys(client).sort()).toEqual(['pair', 'robotStatus', 'runReadings', 'runRecommendation', 'runs', 'session']);
+    await client.pair('ABCD-1234');
+    await client.session('t');
+    await client.robotStatus('t');
+    await client.runs('t');
+    await client.runReadings('t', 'r');
+    await client.runRecommendation('t', 'r');
+    const [pairCall, ...reads] = calls;
+    expect(pairCall).toMatchObject({ method: 'POST', url: API_V1_ROUTES.pairing });
+    expect(reads.every((c) => c.method === 'GET' && c.body === undefined)).toBe(true);
+    expect(calls.map((c) => c.url).join(' ')).not.toMatch(/command|control|dose|dosing|motor|pump|actuator|navigate|start|stop/i);
+  });
+
+  it('reports a readings or recommendation answer for a different run as invalid-response', async () => {
+    const run = {
+      id: 'run-1', sourceRunId: 'R1', runType: 'dosing', fieldId: null, readingCount: 0,
+      firstRobotRecordedAt: null, lastRobotRecordedAt: null, isSynthetic: true,
+    };
+    const recommendation = {
+      recommendation: {
+        id: 'rec', runId: 'run-1', ruleSetVersion: 'v1',
+        inputs: { medianPh: 6, medianEc: 1, medianMoisturePercent: 30, medianTemperatureC: 28, season: 'dry', weatherSource: 'seasonal-defaults', weather: {} },
+        allScores: [], shortlist: [], computedAt: '2026-03-01T09:00:00.000Z',
+      },
+      ruleSetStatus: 'draft',
+      isSynthetic: true,
+    };
+    const client = (body: unknown) => createGatewayClient({ baseUrl: '', fetch: fakeFetch({ status: 200, body }).fetch });
+    const invalid = { ok: false, failure: { kind: 'invalid-response' } };
+
+    expect((await client({ run, readings: [] }).runReadings('t', 'run-1')).ok).toBe(true);
+    expect(await client({ run, readings: [] }).runReadings('t', 'run-2')).toEqual(invalid);
+    expect(await client({ run: { ...run, id: 7 }, readings: [] }).runReadings('t', 'run-1')).toEqual(invalid);
+    expect((await client(recommendation).runRecommendation('t', 'run-1')).ok).toBe(true);
+    expect(await client(recommendation).runRecommendation('t', 'run-2')).toEqual(invalid);
+  });
 });

@@ -3,16 +3,29 @@ import {
   type ApiErrorCode,
   type PairingResponse,
   type RobotStatusResponse,
+  type RunReadingsResponse,
+  type RunRecommendationResponse,
+  type RunsResponse,
   type SessionResponse,
 } from '@robolime/shared';
 
 import { REQUEST_TIMEOUT_MS } from '../config/timing';
-import { isPairingResponse, isRobotStatusResponse, isSessionResponse } from './responseValidation';
+import {
+  isPairingResponse,
+  isReadingsForRun,
+  isRecommendationForRun,
+  isRobotStatusResponse,
+  isRunReadingsResponse,
+  isRunRecommendationResponse,
+  isRunsResponse,
+  isSessionResponse,
+} from './responseValidation';
 
 /**
  * Typed client for the laptop gateway's local API (pairing, session, robot
- * status only). Every call resolves — it never throws — so screens can always
- * show an honest state instead of hanging.
+ * status, and the read-only run/readings/recommendation routes). Every call
+ * resolves — it never throws — so screens can always show an honest state
+ * instead of hanging.
  */
 
 export type GatewayFailure =
@@ -57,6 +70,11 @@ export interface GatewayClient {
   pair(pairingCode: string): Promise<GatewayResult<PairingResponse>>;
   session(token: string): Promise<GatewayResult<SessionResponse>>;
   robotStatus(token: string): Promise<GatewayResult<RobotStatusResponse>>;
+  /** Dosing runs only; the gateway never lists verification runs. */
+  runs(token: string): Promise<GatewayResult<RunsResponse>>;
+  runReadings(token: string, runId: string): Promise<GatewayResult<RunReadingsResponse>>;
+  /** NOT_FOUND (HTTP 404) when no recommendation has been stored for the run. */
+  runRecommendation(token: string, runId: string): Promise<GatewayResult<RunRecommendationResponse>>;
 }
 
 function errorCodeOf(body: unknown): ApiErrorCode | null {
@@ -130,5 +148,21 @@ export function createGatewayClient(options: GatewayClientOptions): GatewayClien
     pair: (pairingCode) => call<PairingResponse>('POST', API_V1_ROUTES.pairing, null, isPairingResponse, { pairingCode }),
     session: (token) => call<SessionResponse>('GET', API_V1_ROUTES.session, token, isSessionResponse),
     robotStatus: (token) => call<RobotStatusResponse>('GET', API_V1_ROUTES.robotStatus, token, isRobotStatusResponse),
+    runs: (token) => call<RunsResponse>('GET', API_V1_ROUTES.runs, token, isRunsResponse),
+    // A valid answer for a different run is reported as invalid-response, never shown.
+    runReadings: (token, runId) =>
+      call<RunReadingsResponse>(
+        'GET',
+        API_V1_ROUTES.runReadings(runId),
+        token,
+        (json): json is RunReadingsResponse => isRunReadingsResponse(json) && isReadingsForRun(json, runId),
+      ),
+    runRecommendation: (token, runId) =>
+      call<RunRecommendationResponse>(
+        'GET',
+        API_V1_ROUTES.runRecommendation(runId),
+        token,
+        (json): json is RunRecommendationResponse => isRunRecommendationResponse(json) && isRecommendationForRun(json, runId),
+      ),
   };
 }

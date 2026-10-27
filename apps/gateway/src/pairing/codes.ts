@@ -42,18 +42,14 @@ export class PairingCodeFormatError extends Error {
   override name = 'PairingCodeFormatError';
 }
 
-export function hashPairingCode(code: string, params: ScryptParams = DEFAULT_SCRYPT_PARAMS): string {
-  const normalized = normalizePairingCode(code);
-  if (normalized.length < MIN_PAIRING_CODE_LENGTH) {
-    throw new PairingCodeFormatError(`Pairing codes must have at least ${MIN_PAIRING_CODE_LENGTH} characters`);
-  }
+function hashInput(input: string, params: ScryptParams): string {
   const salt = randomBytes(SALT_LENGTH);
-  const hash = scryptSync(normalized, salt, KEY_LENGTH, { ...params, maxmem: 64 * 1024 * 1024 });
+  const hash = scryptSync(input, salt, KEY_LENGTH, { ...params, maxmem: 64 * 1024 * 1024 });
   return ['scrypt', params.N, params.r, params.p, salt.toString('base64url'), hash.toString('base64url')].join('$');
 }
 
-/** Constant-time verification against a stored verifier. Malformed verifiers never match. */
-export function verifyPairingCode(code: string, verifier: string): boolean {
+/** Constant-time comparison of a scrypt input against a stored verifier. Malformed verifiers never match. */
+function verifyInput(input: string, verifier: string): boolean {
   const parts = verifier.split('$');
   if (parts.length !== 6 || parts[0] !== 'scrypt') {
     return false;
@@ -66,11 +62,50 @@ export function verifyPairingCode(code: string, verifier: string): boolean {
     return false;
   }
   const expected = Buffer.from(hashText, 'base64url');
-  const actual = scryptSync(normalizePairingCode(code), Buffer.from(saltText, 'base64url'), expected.length, {
+  const actual = scryptSync(input, Buffer.from(saltText, 'base64url'), expected.length, {
     N,
     r,
     p,
     maxmem: 64 * 1024 * 1024,
   });
   return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+export function hashPairingCode(code: string, params: ScryptParams = DEFAULT_SCRYPT_PARAMS): string {
+  const normalized = normalizePairingCode(code);
+  if (normalized.length < MIN_PAIRING_CODE_LENGTH) {
+    throw new PairingCodeFormatError(`Pairing codes must have at least ${MIN_PAIRING_CODE_LENGTH} characters`);
+  }
+  return hashInput(normalized, params);
+}
+
+/** Constant-time verification against a stored verifier. Malformed verifiers never match. */
+export function verifyPairingCode(code: string, verifier: string): boolean {
+  return verifyInput(normalizePairingCode(code), verifier);
+}
+
+/**
+ * DEMO ONLY (decision D47). A fixed, publicly known code for an isolated
+ * local demonstration on a synthetic 'demo' database. It is predictable and
+ * must NEVER be used in a field deployment. It is accepted only when the
+ * gateway runs with demo pairing explicitly enabled (loopback, demo database).
+ */
+export const DEMO_PAIRING_CODE = '10302026';
+
+/**
+ * Domain separation for the demo verifier: it hashes this prefix plus the
+ * normalized code. Normal verification upper-cases every input, so no code
+ * entered in normal mode can reproduce this lowercase prefix, and a demo
+ * verifier can never match through `verifyPairingCode`.
+ */
+const DEMO_HASH_PREFIX = 'robolime-demo-pairing:';
+
+/** Verifier for `DEMO_PAIRING_CODE`, in the normal stored format (only the hash input differs). */
+export function hashDemoPairingCode(params: ScryptParams = DEFAULT_SCRYPT_PARAMS): string {
+  return hashInput(DEMO_HASH_PREFIX + normalizePairingCode(DEMO_PAIRING_CODE), params);
+}
+
+/** Matches only verifiers made by `hashDemoPairingCode`; never a normally provisioned verifier. */
+export function verifyDemoPairingCode(code: string, verifier: string): boolean {
+  return verifyInput(DEMO_HASH_PREFIX + normalizePairingCode(code), verifier);
 }
