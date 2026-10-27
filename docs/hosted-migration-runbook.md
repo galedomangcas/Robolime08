@@ -193,3 +193,56 @@ state, repair would hide drift: **do not repair.**
 
 Both need the `postgres` credentials, which are not configured on this
 machine; they were not requested.
+
+## 6. OTHER classification: diagnosis and corrected rehearsal (2026-10-28)
+Status: **diagnosed; the kit's guard worked; hosted apply still BLOCKED** (needs
+the default-privilege check, a reviewed kit correction, and your approval).
+
+- **What happened:** the first hosted run (2026-10-27T17:06Z) stopped at
+  pre-apply classification `OTHER` (`6e0f3cc…`, 338 items). Nothing changed.
+- **Read-only capture:**
+  `hosted-manifest-bkocxkavdosghmqjckty-20261027T172735Z.txt` (SHA-256
+  `03DB492B…E939B1`) reproduces `6e0f3cc…` with the manifest algorithm.
+- **Difference from the old reference:** 22 items differ from
+  `legacy-manifest.txt`, all in grants (18 relations, 4 functions); the
+  structure is identical. The hosted grants are narrower: no `anon`, and
+  `authenticated` SELECT (or SELECT,INSERT).
+- **Cause, proven:**
+  - the backup's own GRANT statements equal the hosted grants
+  - the rehearsal image has `supabase_admin` default privileges in `public`
+    granting everything to `anon`/`authenticated`/`service_role`, which the
+    old restore (run as `supabase_admin`) inherited
+  - so `legacy-manifest.txt` (`d3943ba3…`) was a rehearsal artifact; the
+    hosted project has not drifted since the backup
+- **Corrected rehearsal** (new container `robolime-phase4-rehearsal3-db`,
+  127.0.0.1:55342; evidence in
+  `C:\Users\doman\RoboLime-backups\diag-rehearsal3-20261028\`):
+  - with those defaults suspended during the restore, the restored legacy
+    listing is **byte-identical** to the hosted capture (same SHA-256,
+    `6e0f3cc…`)
+  - the **unchanged** kit precheck refuses it (guard intact)
+  - cleanup + target + the **unchanged** kit postcheck pass: target
+    `3bdf928…` plus all RLS/grant/EXECUTE/schema/policy assertions, both
+    rolled back and committed
+  - classification is TARGET after the commit; a second cleanup is refused
+  - the repository RLS test (with its synthetic seed) passes
+- **Remaining unknown:** the hosted **default privileges** of `postgres` in
+  `public`/`private`, which decide the grants of the new tables. The
+  rehearsal used the image's defaults. Read-only capture script:
+  `C:\Users\doman\RoboLime-backups\capture-hosted-default-privileges-readonly.ps1`
+  (SHA-256 `054FE4B4…7DAE97`); you run it.
+- **Proposed kit correction** (not made; needs review and approval). Build a
+  **new** kit folder; never edit `phase4-apply-20261027`:
+  1. legacy reference = the corrected-restore listing (`03DB492B…`) and
+     fingerprint `6e0f3ccffd45b7100c432dc4900dfc12` (338 items) in
+     `precheck.sql` and `classify.sql`;
+  2. add a precheck assertion that the hosted `postgres` default privileges
+     in `public` equal the rehearsed ones, so the target grants are predicted
+     rather than assumed;
+  3. keep everything else (cleanup, target, postcheck `3bdf928…`), re-pin all
+     hashes, re-rehearse end to end, and re-review before any hosted run.
+- **Recovery point:**
+  - the backup's `public`/`private` restore is now proven to reproduce the
+    hosted structure **and grants** exactly (empty tables)
+  - a restore onto the hosted project and a whole-database restore remain
+    untested

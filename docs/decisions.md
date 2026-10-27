@@ -1563,3 +1563,21 @@ changed.
   - the online build still shows "not available yet" (D48)
   - the cloud reader is not wired in
   - the status strip scrolls normally (D46)
+
+## D51 — OTHER classification explained; kit correction proposed (not applied)
+
+**Status: FINDINGS RECORDED (2026-10-28).** No hosted change; the apply kit
+`phase4-apply-20261027` is unchanged and still refuses (OTHER).
+
+- **Cause:** the kit's legacy reference was built from a local restore that
+  inherited the rehearsal image's `supabase_admin` default privileges in
+  `public`. The hosted grants equal the backup's.
+- **Proof:** a restore with those defaults suspended reproduces the hosted
+  listing byte-for-byte (`6e0f3cc…`). From there, cleanup + target pass the
+  unchanged postcheck (`3bdf928…`) and the RLS test.
+- **Before any hosted apply:**
+  - capture the hosted default privileges (read-only script; you run it)
+  - review and approve a corrected **new** kit (runbook §6)
+  - your explicit approval of the hosted run
+- **Unchanged:** migrations, RLS design (D18) and the open claim flow (#14).
+  Details: `docs/hosted-migration-runbook.md` §6.
