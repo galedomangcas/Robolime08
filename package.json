@@ -17,7 +17,10 @@
     "build:web": "npm run build:web --workspace @robolime/mobile",
     "check": "npm run typecheck && npm run lint && npm run test",
     "db:cloud:test": "node supabase/tests/run-local-postgres.mjs",
-    "db:cloud:types": "node supabase/tests/run-local-postgres.mjs --gen-types packages/shared/src/generated/database.types.ts"
+    "db:cloud:types": "node supabase/tests/run-local-postgres.mjs --gen-types packages/shared/src/generated/database.types.ts",
+    "demo:pairing": "npm run demo:pairing --workspace @robolime/gateway --",
+    "demo:serve": "npm run demo:serve --workspace @robolime/gateway --",
+    "cloud:claim-code": "npm run cloud:claim-code --workspace @robolime/gateway --"
   },
   "engines": {
     "node": "^22.16.0 || ^24.3.0 || >=26.0.0"

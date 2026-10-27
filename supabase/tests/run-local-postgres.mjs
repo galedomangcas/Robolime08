@@ -1,4 +1,4 @@
-// Runs the cloud-mirror migrations, synthetic seed and RLS tests against a
+// Runs the cloud-mirror migrations, synthetic seed, RLS and claim-flow tests against a
 // THROWAWAY PostgreSQL cluster created in a temp directory and bound to
 // 127.0.0.1 only. It never reads a connection string or credentials from the
 // environment, and it checks that the server it connects to reports the
@@ -78,6 +78,7 @@ try {
   }
   psqlFile(join(supabaseDir, 'seeds', 'demo_synthetic.sql'));
   psqlFile(join(here, 'rls_robot_scope.test.sql'));
+  psqlFile(join(here, 'claim_flow.test.sql'));
 
   if (genTypesOut) {
     console.log('-- attempting Supabase type generation against the throwaway cluster');

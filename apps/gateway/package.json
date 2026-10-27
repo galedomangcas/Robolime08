@@ -18,7 +18,10 @@
     "db:backup": "tsx src/cli/db-backup.ts",
     "serve": "tsx src/cli/serve.ts",
     "bridge:simulate": "tsx src/cli/bridge-simulate.ts",
-    "export:csv": "tsx src/cli/export-csv.ts"
+    "export:csv": "tsx src/cli/export-csv.ts",
+    "demo:pairing": "tsx src/cli/demo-pairing.ts",
+    "demo:serve": "tsx src/cli/demo-serve.ts",
+    "cloud:claim-code": "tsx src/cli/cloud-claim-code.ts"
   },
   "dependencies": {
     "@robolime/shared": "0.1.0",
