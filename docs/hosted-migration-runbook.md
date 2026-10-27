@@ -278,3 +278,20 @@ Status: **rehearsed; hosted run pending (owner runs it; needs the DB password).*
 - **Recovery point:** proven for the public/private schema and grants (empty
   tables) by two independent faithful restores. A restore onto the hosted
   project itself remains untested.
+
+### 7.1 Hosted run of kit v3 refused; kit v4 (2026-10-27T19:35Z)
+- **Outcome:** NOT APPLIED. The precheck refused, and classification before and
+  after was LEGACY `6e0f3cc…`. Record:
+  `robolime-hosted-apply-bkocxkavdosghmqjckty-20261027T193433Z-86ca86.*`.
+- **Cause (kit bug, not drift):** the default-privilege check built its array
+  with `array_agg(... order by 1)`. Inside an aggregate, `1` is a constant, so
+  the order was undefined. Hosted returned the **same three entries** as the
+  rehearsal (`public` r/f/S granting postgres/anon/authenticated/service_role)
+  in a different order.
+- **Fix:** kit v4 (`phase4-apply-20261028-v4\`) sorts the entries with
+  `collate "C"`; nothing else changed. A test shows the hosted order now
+  matches.
+- **Rehearsal:** fresh faithful restore on rehearsal6 (127.0.0.1:55372):
+  LEGACY → COMMITTED → TARGET `71fdcd2…`; the RLS and claim tests pass.
+- **Not changed:** `manifest.sql` has the same pattern, but only in single-role
+  policy lists. Its fingerprints are verified on hosted, so it is left as is.
