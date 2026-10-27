@@ -33,7 +33,7 @@ interface ResultsScreenProps {
 
 type Load<T> = { kind: 'loading' } | { kind: 'failed'; message: string } | { kind: 'loaded'; data: T };
 
-const failureMessage = (failure: GatewayFailure) => `${connectionLabel({ kind: 'unavailable', failure })}.`;
+const failureMessage = (failure: GatewayFailure, source: string) => `${connectionLabel({ kind: 'unavailable', failure }, source)}.`;
 
 /**
  * Results (CLAUDE.md §4 Screen 4, without the cell map, D29), laid out after
@@ -62,7 +62,7 @@ export function ResultsScreen({ dataSource, token, onSessionInvalid }: ResultsSc
       } else if (isSessionInvalid(result.failure)) {
         onSessionInvalid();
       } else {
-        setRuns({ kind: 'failed', message: failureMessage(result.failure) });
+        setRuns({ kind: 'failed', message: failureMessage(result.failure, dataSource.sourceName) });
       }
     });
     return () => {
@@ -94,7 +94,7 @@ export function ResultsScreen({ dataSource, token, onSessionInvalid }: ResultsSc
           />
         )}
         {runs.kind === 'loaded' && runs.data.length === 0 && (
-          <Text style={textStyles.body}>No dosing runs have been recorded on this gateway yet.</Text>
+          <Text style={textStyles.body}>{dataSource.kind === 'cloud' ? 'No dosing runs have been synchronised to the cloud yet.' : 'No dosing runs have been recorded on this gateway yet.'}</Text>
         )}
         {runs.kind === 'loaded' &&
           runs.data.map((run) => (
@@ -156,7 +156,7 @@ function RunDetail({
         onSessionInvalid();
         return;
       }
-      setReadings(result.ok ? { kind: 'loaded', data: result.data } : { kind: 'failed', message: runLoadFailureMessage(result.failure) });
+      setReadings(result.ok ? { kind: 'loaded', data: result.data } : { kind: 'failed', message: runLoadFailureMessage(result.failure, dataSource.sourceName) });
     });
     return () => {
       active = false;
@@ -173,9 +173,9 @@ function RunDetail({
       } else if (isSessionInvalid(result.failure)) {
         onSessionInvalid();
       } else if (isRecommendationMissing(result.failure)) {
-        setRecommendation({ kind: 'loaded', data: { kind: 'none', message: recommendationFailureMessage(result.failure) } });
+        setRecommendation({ kind: 'loaded', data: { kind: 'none', message: recommendationFailureMessage(result.failure, dataSource.sourceName) } });
       } else {
-        setRecommendation({ kind: 'failed', message: recommendationFailureMessage(result.failure) });
+        setRecommendation({ kind: 'failed', message: recommendationFailureMessage(result.failure, dataSource.sourceName) });
       }
     });
     return () => {

@@ -132,15 +132,25 @@ describe('cloud reader (read-only, session required)', () => {
     expect(await createCloudReader({ config: CONFIG, session: signedIn, fetch: bad.fetch }).claimedRobotIds()).toEqual({ ok: false, failure: { kind: 'invalid-response' } });
   });
 
-  it('exposes read methods only: no write, claim, command, RPC or dosing path', async () => {
+  it('exposes reads plus the one claim RPC (D52): no table write, command or dosing path', async () => {
     const { fetch, calls } = fakeFetch({ status: 200, body: [] });
     const reader = createCloudReader({ config: CONFIG, session: signedIn, fetch });
-    expect(Object.keys(reader).sort()).toEqual(['claimedRobotIds', 'robotStatus']);
+    expect(Object.keys(reader).sort()).toEqual([
+      'claimRobot', 'claimedRobotIds', 'claimedRobots', 'robotStatus', 'runReadings', 'runRecommendation', 'runs',
+    ]);
     await reader.claimedRobotIds();
+    await reader.claimedRobots();
     await reader.robotStatus(ROBOT);
+    await reader.runs(ROBOT);
+    await reader.runReadings(ROBOT, ROBOT);
+    await reader.runRecommendation(ROBOT, ROBOT);
     expect(calls.every((c) => c.method === 'GET' && c.body === undefined)).toBe(true);
-    // Only these two tables are ever read; never an RPC endpoint or any other path.
-    const paths = calls.map((c) => new URL(c.url).pathname);
-    expect(paths).toEqual(['/rest/v1/robot_claims', '/rest/v1/robot_status_reports']);
+    // Reads touch only the mirror tables; never an RPC endpoint.
+    const paths = [...new Set(calls.map((c) => new URL(c.url).pathname))];
+    expect(paths).toEqual(['/rest/v1/robot_claims', '/rest/v1/robots', '/rest/v1/robot_status_reports', '/rest/v1/runs']);
+    await reader.claimRobot('ABCD-2345-EFGH');
+    const last = calls[calls.length - 1];
+    expect(last && new URL(last.url).pathname).toBe('/rest/v1/rpc/claim_robot');
+    expect(last?.method).toBe('POST');
   });
 });

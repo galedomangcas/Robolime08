@@ -2,12 +2,16 @@ import { StatusBar } from 'expo-status-bar';
 import { useMemo } from 'react';
 import { Platform } from 'react-native';
 
+import { cloudConfig } from './src/config/cloudConfig';
 import { deploymentTarget } from './src/config/deploymentTarget';
 import { defaultGatewayUrl } from './src/config/env';
+import { createCloudAuth } from './src/data/cloudAuth';
+import { createCloudReader } from './src/data/cloudReader';
 import { createGatewayClient } from './src/data/gatewayClient';
-import { createDefaultSessionStore } from './src/data/sessionStore';
+import { createDefaultSessionStore, type KeyValueStorage } from './src/data/sessionStore';
 import { AppRoot } from './src/screens/AppRoot';
 import { LandingScreen } from './src/screens/LandingScreen';
+import { OnlineRoot } from './src/screens/OnlineRoot';
 import { OnlineUnavailableScreen } from './src/screens/OnlineUnavailableScreen';
 
 /**
@@ -17,15 +21,32 @@ import { OnlineUnavailableScreen } from './src/screens/OnlineUnavailableScreen';
  */
 const gatewayBaseUrl = Platform.OS === 'web' ? '' : defaultGatewayUrl;
 
+function browserStorage(): KeyValueStorage | null {
+  try {
+    return (globalThis as { localStorage?: KeyValueStorage }).localStorage ?? null;
+  } catch {
+    return null; // site data blocked
+  }
+}
+
 export default function App() {
   const client = useMemo(() => (gatewayBaseUrl === null ? null : createGatewayClient({ baseUrl: gatewayBaseUrl })), []);
   const store = useMemo(() => createDefaultSessionStore(), []);
+  // Online (Vercel) build only (D52): anonymous Supabase sign-in + server-verified claim code.
+  const online = useMemo(() => {
+    if (deploymentTarget !== 'online' || !cloudConfig.ok) return null;
+    const auth = createCloudAuth({ config: cloudConfig, storage: browserStorage() });
+    return { auth, reader: createCloudReader({ config: cloudConfig, session: auth }) };
+  }, []);
 
-  // Only the field build talks to a gateway; the online (Vercel) build has no data source yet (D48).
   if (deploymentTarget !== 'field') {
     return (
       <>
-        <OnlineUnavailableScreen reason={deploymentTarget} />
+        {online !== null ? (
+          <OnlineRoot auth={online.auth} reader={online.reader} />
+        ) : (
+          <OnlineUnavailableScreen reason={deploymentTarget === 'online' ? 'online' : 'invalid'} />
+        )}
         <StatusBar style="dark" />
       </>
     );

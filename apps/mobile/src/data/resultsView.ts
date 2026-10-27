@@ -138,9 +138,9 @@ export type RecommendationView =
 const isNotFound = (failure: GatewayFailure) => failure.kind === 'api' && failure.code === 'NOT_FOUND';
 
 /** A missing run (404) is not a gateway outage: say which it is. */
-export function runLoadFailureMessage(failure: GatewayFailure): string {
-  if (isNotFound(failure)) return 'This run is no longer available on the field gateway.';
-  return `${connectionLabel({ kind: 'unavailable', failure })}.`;
+export function runLoadFailureMessage(failure: GatewayFailure, source = 'Field gateway'): string {
+  if (isNotFound(failure)) return source === 'Field gateway' ? 'This run is no longer available on the field gateway.' : `This run is not available from ${source}.`;
+  return `${connectionLabel({ kind: 'unavailable', failure }, source)}.`;
 }
 
 /**
@@ -151,11 +151,11 @@ export function isRecommendationMissing(failure: GatewayFailure): boolean {
   return isNotFound(failure);
 }
 
-export function recommendationFailureMessage(failure: GatewayFailure): string {
+export function recommendationFailureMessage(failure: GatewayFailure, source = 'Field gateway'): string {
   if (isNotFound(failure)) {
     return 'No crop recommendation has been stored for this run yet.';
   }
-  return `Crop recommendation unavailable. ${connectionLabel({ kind: 'unavailable', failure })}.`;
+  return `Crop recommendation unavailable. ${connectionLabel({ kind: 'unavailable', failure }, source)}.`;
 }
 
 export function buildRecommendationView(stored: RunRecommendationResponse): RecommendationView {

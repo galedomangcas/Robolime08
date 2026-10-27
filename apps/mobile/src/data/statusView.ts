@@ -36,6 +36,8 @@ export interface StatusViewInput {
   /** Latest successful answer, kept when later polls fail; null if none yet. */
   snapshot: StatusSnapshot | null;
   now: Date;
+  /** Where the data comes from, for messages (default "Field gateway"). */
+  sourceName?: string;
 }
 
 export interface StatusView {
@@ -55,31 +57,31 @@ export interface StatusView {
   robotAt: string | null;
 }
 
-export function connectionLabel(connection: Connection): string {
+export function connectionLabel(connection: Connection, source = 'Field gateway'): string {
   switch (connection.kind) {
     case 'connecting':
-      return 'Connecting to the field gateway…';
+      return `Connecting to the ${source === 'Field gateway' ? 'field gateway' : source}…`;
     case 'connected':
-      return 'Field gateway connected';
+      return `${source} connected`;
     case 'unavailable':
       switch (connection.failure.kind) {
         case 'timeout':
-          return `Field gateway unavailable: no answer within ${TIMEOUT_SECONDS} seconds`;
+          return `${source} unavailable: no answer within ${TIMEOUT_SECONDS} seconds`;
         case 'unreachable':
-          return 'Field gateway unavailable: cannot reach it';
+          return `${source} unavailable: cannot reach it`;
         case 'api':
-          return `Field gateway unavailable: error ${connection.failure.status}`;
+          return `${source} unavailable: error ${connection.failure.status}`;
         case 'invalid-response':
-          return 'Field gateway unavailable: unreadable answer';
+          return `${source} unavailable: unreadable answer`;
       }
   }
 }
 
-export function buildStatusView({ connection, snapshot, now }: StatusViewInput): StatusView {
+export function buildStatusView({ connection, snapshot, now, sourceName }: StatusViewInput): StatusView {
   const unavailable = connection.kind === 'unavailable';
   const status = snapshot?.status ?? null;
   const base = {
-    connectionLabel: connectionLabel(connection),
+    connectionLabel: connectionLabel(connection, sourceName),
     connectionOk: connection.kind === 'connected',
   };
 

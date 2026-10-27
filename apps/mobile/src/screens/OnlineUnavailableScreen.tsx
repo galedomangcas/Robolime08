@@ -4,7 +4,7 @@ import { colors } from '../theme';
 import { Card, IconTile, LogoTile, StripedHero, textStyles } from '../ui/primitives';
 
 interface OnlineUnavailableScreenProps {
-  /** `online`: the Vercel build before the cloud adapter exists. `invalid`: bad EXPO_PUBLIC_ROBOLIME_TARGET. */
+  /** `online`: the Vercel build without a valid public Supabase configuration (D52). `invalid`: bad EXPO_PUBLIC_ROBOLIME_TARGET. */
   reason: 'online' | 'invalid';
 }
 
@@ -34,11 +34,11 @@ export function OnlineUnavailableScreen({ reason }: OnlineUnavailableScreenProps
           {reason === 'online' ? (
             <>
               <Text accessibilityRole="header" style={styles.heading}>
-                Online access is not available yet
+                Online access is not configured
               </Text>
               <Text style={textStyles.body}>
-                Field data is recorded on the team’s laptop at the field and does not need internet. Viewing it online
-                requires the cloud connection, which has not been set up yet.
+                Field data is recorded on the team’s laptop at the field and does not need internet. This online build
+                has no valid cloud connection settings (EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY).
               </Text>
               <Text style={textStyles.body}>No robot or field data is shown here.</Text>
             </>

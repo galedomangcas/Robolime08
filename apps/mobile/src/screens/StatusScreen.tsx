@@ -76,7 +76,8 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const view = buildStatusView({ connection, snapshot, now: currentTime });
+  const view = buildStatusView({ connection, snapshot, now: currentTime, sourceName: dataSource.sourceName });
+  const online = dataSource.kind === 'cloud';
   const pillTone = connection.kind === 'connected' ? 'positive' : connection.kind === 'unavailable' ? 'negative' : 'neutral';
 
   const content = (
@@ -89,7 +90,7 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
             </Text>
             {session.robot.isSynthetic && <SyntheticBadge />}
           </View>
-          <Text style={textStyles.muted}>RoboLime · field gateway on this computer</Text>
+          <Text style={textStyles.muted}>{online ? 'RoboLime · online (synchronised records)' : 'RoboLime · field gateway on this computer'}</Text>
         </View>
         <StatusPill label={view.connectionLabel} tone={pillTone} />
       </View>
@@ -97,7 +98,7 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
       <StatusStrip view={view} wide={wide} />
 
       {section === 'results' && <ResultsScreen dataSource={dataSource} token={session.token} onSessionInvalid={onSessionInvalid} />}
-      {section === 'exports' && <ExportsScreen />}
+      {section === 'exports' && <ExportsScreen online={online} />}
       {section === 'field' && (
         <View style={styles.sectionBody}>
           <InfoBox tone="neutral" icon="alert">
@@ -137,14 +138,15 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
             {confirmForget ? (
               <>
                 <Text style={textStyles.body}>
-                  This removes the pairing from this browser only. It does not end the session on the gateway: that
-                  session stays valid until it expires or the operator creates a new pairing code.
+                  {online
+                    ? 'This signs this browser out of RoboLime online. To view the robot again you will need a new claim code from the operator.'
+                    : 'This removes the pairing from this browser only. It does not end the session on the gateway: that session stays valid until it expires or the operator creates a new pairing code.'}
                 </Text>
-                <SecondaryButton label="Forget this device" danger onPress={onForget} />
+                <SecondaryButton label={online ? 'Sign out' : 'Forget this device'} danger onPress={onForget} />
                 <SecondaryButton label="Cancel" onPress={() => setConfirmForget(false)} />
               </>
             ) : (
-              <SecondaryButton label="Forget this device…" onPress={() => setConfirmForget(true)} />
+              <SecondaryButton label={online ? 'Sign out…' : 'Forget this device…'} onPress={() => setConfirmForget(true)} />
             )}
           </Card>
         </View>

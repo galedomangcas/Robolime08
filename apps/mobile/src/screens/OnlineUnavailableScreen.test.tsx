@@ -15,9 +15,9 @@ describe('OnlineUnavailableScreen (D48)', () => {
     globalThis.fetch = realFetch;
   });
 
-  it('tells online visitors that online access is not available, without data or requests', async () => {
+  it('tells online visitors that online access is not configured, without data or requests', async () => {
     await render(<OnlineUnavailableScreen reason="online" />);
-    expect(screen.getByText('Online access is not available yet')).toBeTruthy();
+    expect(screen.getByText('Online access is not configured')).toBeTruthy();
     expect(screen.getByText('No robot or field data is shown here.')).toBeTruthy();
     // Never implies a reachable field gateway, never offers pairing, never shows values.
     expect(allText()).not.toMatch(/Pair this device|gateway connected|Latest report|\bpH\s*\d|\d+(\.\d+)?\s*(mL|V)\b/);

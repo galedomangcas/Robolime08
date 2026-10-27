@@ -36,14 +36,19 @@ const EXPORTS: readonly { title: string; detail: string; icon: IconName; tint: s
   },
 ];
 
-export function ExportsScreen() {
+/** `online`: the Vercel build, which has no export path; the exports exist only on the field laptop. */
+export function ExportsScreen({ online = false }: { online?: boolean }) {
   return (
     <View style={styles.body}>
       <View style={styles.intro}>
         <Text accessibilityRole="header" style={textStyles.pageTitle}>
           Research exports
         </Text>
-        <Text style={textStyles.muted}>CSV files built from the field laptop’s records. Works without internet.</Text>
+        <Text style={textStyles.muted}>
+          {online
+            ? 'CSV files are built on the field laptop from its own records, not from this online view.'
+            : 'CSV files built from the field laptop’s records. Works without internet.'}
+        </Text>
       </View>
 
       <InfoBox tone="warning" icon="download">
