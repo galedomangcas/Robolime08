@@ -52,7 +52,7 @@ on the development machine.
 2. **No dashboard Build or Output overrides** that differ from `vercel.json`.
 3. **Environment variables:**
    - required (Production and Preview): `EXPO_PUBLIC_SUPABASE_URL`
-     (`https://bkocxkavdosghmqjckty.supabase.co`) and a **publishable/anon**
+     (`https://pbwucdgmzvvxledtiocm.supabase.co`, D53) and a **publishable/anon**
      `EXPO_PUBLIC_SUPABASE_ANON_KEY`. The build guard fails on Vercel if
      either is missing.
    - **never** add a service-role or `sb_secret_` key. The guard refuses

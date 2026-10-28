@@ -1625,3 +1625,29 @@ Requested by the project owner (finalize Supabase, online app, pairing code `103
 - **Not done here (needs the owner):** running kit v3 on the hosted project (DB
   password), enabling anonymous sign-ins (dashboard), Vercel login/link and
   environment variables. No hosted resource was contacted or changed.
+
+## D53 — Hosted project for online access is `pbwucdgmzvvxledtiocm`
+
+**Status: DECIDED by the project owner (2026-10-29).**
+
+- The Vercel project (`https://robolime.vercel.app/`, connected to
+  `ginoomapayapa/Robolime` `main`) uses Supabase project
+  **`pbwucdgmzvvxledtiocm`** through the Vercel–Supabase integration. This
+  replaces `bkocxkavdosghmqjckty` for online access.
+- The D52 schema (cloud mirror + online claim flow) was applied to it with
+  `robolime-supabase-schema-EMPTY-PROJECT.sql`; the owner ran the VERIFY query
+  and every row matched.
+- `bkocxkavdosghmqjckty` was not changed by this work: kit v3/v4 refused, so it
+  still holds the legacy schema. Its references in the apply kits, runbook and
+  backups describe that project and stay as they are.
+- `vercel.json` CSP `connect-src` now allows `https://pbwucdgmzvvxledtiocm.supabase.co`.
+- Live checks against the deployed configuration (2026-10-29):
+  - the site serves the online build and the headers are present
+  - the bundle holds the `anon` key of `pbwucdgmzvvxledtiocm` and no
+    service-role key or demo code
+  - anonymous sign-in works, and a wrong claim code returns `invalid-code`
+  - a signed-in user without a claim sees no robots or readings
+  - the public key alone cannot read readings or provision claim codes (401)
+- **Gateway sync:** the field gateway's `SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY` (in `apps/gateway/.env.local`) must name
+  `pbwucdgmzvvxledtiocm`.
