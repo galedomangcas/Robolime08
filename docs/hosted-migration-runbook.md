@@ -295,3 +295,29 @@ Status: **rehearsed; hosted run pending (owner runs it; needs the DB password).*
   LEGACY → COMMITTED → TARGET `71fdcd2…`; the RLS and claim tests pass.
 - **Not changed:** `manifest.sql` has the same pattern, but only in single-role
   policy lists. Its fingerprints are verified on hosted, so it is left as is.
+### 7.2 Hosted schema applied via the SQL Editor (2026-10-29)
+- **Found:** a read-only state check showed the hosted `public`/`private`
+  schemas **empty**: no tables, functions or policies, and no migration-history
+  table. The legacy objects seen on 2026-10-27 had been removed outside this
+  kit (cause not recorded here). The kit-v4 legacy precheck therefore refused
+  in the SQL Editor (`relation "public.field_selections" does not exist`),
+  changing nothing.
+- **Applied:** `C:\Users\doman\RoboLime-backups\robolime-supabase-schema-EMPTY-PROJECT.sql`
+  (one transaction). It contains an empty-project precheck,
+  `20261023000000_cloud_mirror_initial`, `20261028000000_online_claim_flow`,
+  and the kit-v4 postcheck block. The owner ran it in the Dashboard SQL Editor.
+- **Rehearsed first** on a blank image database (rehearsal8): it produced
+  TARGET `71fdcd2…` (368 items, identical to the kit target), the RLS and
+  claim tests passed, and a second run was refused.
+- **Hosted verification** (`robolime-supabase-schema-VERIFY.sql`, read-only,
+  run by the owner):
+  - 14 public tables, 2 private tables, 0 tables without RLS, 14 policies
+  - `claim_robot` executable by authenticated and not by anon
+  - provisioning not executable by authenticated
+  - anon cannot read `readings`
+  - legacy `grid_cells` absent
+- **Not done:** the hosted manifest fingerprint was not captured (that needs
+  psql with the password). Migration history was not written: no history table
+  exists, and `supabase db push` must not be run before a repair per
+  `migration-history-plan.md`. The legacy cleanup `20261022000000` was not
+  needed on the empty project.
