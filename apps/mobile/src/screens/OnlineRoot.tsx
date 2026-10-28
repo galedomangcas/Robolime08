@@ -15,6 +15,8 @@ import { StatusScreen } from './StatusScreen';
 interface OnlineRootProps {
   auth: CloudAuth;
   reader: CloudReader;
+  /** Public Supabase project ref, shown for diagnosis (not a secret). */
+  projectRef?: string;
   now?: () => Date;
   timers?: Timers;
 }
@@ -77,7 +79,7 @@ export function signInFailureMessage(failure: CloudAuthFailure): string {
  * status / results screens as the field build, fed by the cloud data source.
  * The robot is never named by the client: RLS shows only claimed robots.
  */
-export function OnlineRoot({ auth, reader, now, timers }: OnlineRootProps) {
+export function OnlineRoot({ auth, reader, projectRef, now, timers }: OnlineRootProps) {
   // No stored sign-in: straight to the claim step, without a request.
   const [phase, setPhase] = useState<Phase>(() => (auth.current() === null ? { kind: 'claim' } : { kind: 'checking' }));
   const [notice, setNotice] = useState<string | null>(null);
@@ -122,9 +124,15 @@ export function OnlineRoot({ auth, reader, now, timers }: OnlineRootProps) {
       reader={reader}
       phase={phase}
       notice={notice}
+      projectRef={projectRef}
       onRetry={() => {
         setPhase({ kind: 'checking' });
         check();
+      }}
+      onStartOver={() => {
+        void auth.signOut();
+        setNotice(null);
+        setPhase({ kind: 'claim' });
       }}
       onClaimed={(robot) => {
         setNotice(null);
@@ -165,13 +173,18 @@ function ClaimScreen({
   reader,
   phase,
   notice,
+  projectRef,
   onRetry,
+  onStartOver,
   onClaimed,
 }: {
   auth: CloudAuth;
   reader: CloudReader;
   phase: Exclude<Phase, { kind: 'viewing' }>;
   notice: string | null;
+  projectRef?: string;
+  /** Forgets this browser's online sign-in and shows the claim-code entry. */
+  onStartOver: () => void;
   onRetry: () => void;
   onClaimed: (robot: RobotSummary) => void;
 }) {
@@ -264,8 +277,11 @@ function ClaimScreen({
               <Text style={styles.noticeText}>{phase.message}</Text>
             </InfoBox>
             <SecondaryButton label="Try again" onPress={onRetry} />
+            <SecondaryButton label="Enter a claim code instead" onPress={onStartOver} />
           </View>
         )}
+
+        {projectRef !== undefined && <Text style={textStyles.muted}>Cloud project: {projectRef}</Text>}
 
         {phase.kind === 'claim' && (
           <>

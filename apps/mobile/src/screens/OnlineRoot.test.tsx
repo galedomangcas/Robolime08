@@ -99,4 +99,15 @@ describe('OnlineRoot (D52)', () => {
     expect(await screen.findByText(/Cannot reach RoboLime cloud/)).toBeTruthy();
     expect(screen.getByText('Try again')).toBeTruthy();
   });
+
+  it('lets the user leave a broken stored sign-in and enter a claim code, and shows the cloud project', async () => {
+    const auth = fakeAuth(undefined, SESSION);
+    await render(
+      <OnlineRoot timers={timers} now={NOW} projectRef="abcdefghijklmnopqrst" auth={auth} reader={fakeReader({ claimedRobots: async () => ({ ok: false, failure: { kind: 'unreachable' } }) })} />,
+    );
+    expect(await screen.findByText('Cloud project: abcdefghijklmnopqrst')).toBeTruthy();
+    await act(async () => fireEvent.press(await screen.findByRole('button', { name: 'Enter a claim code instead' })));
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
+    expect(await screen.findByLabelText('Online claim code')).toBeTruthy();
+  });
 });

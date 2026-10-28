@@ -43,7 +43,7 @@ export default function App() {
     return (
       <>
         {online !== null ? (
-          <OnlineRoot auth={online.auth} reader={online.reader} />
+          <OnlineRoot auth={online.auth} reader={online.reader} projectRef={cloudConfig.ok ? cloudConfig.projectRef : undefined} />
         ) : (
           <OnlineUnavailableScreen reason={deploymentTarget === 'online' ? 'online' : 'invalid'} />
         )}

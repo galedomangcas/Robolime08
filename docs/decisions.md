@@ -1651,3 +1651,12 @@ Requested by the project owner (finalize Supabase, online app, pairing code `103
 - **Gateway sync:** the field gateway's `SUPABASE_URL` and
   `SUPABASE_SERVICE_ROLE_KEY` (in `apps/gateway/.env.local`) must name
   `pbwucdgmzvvxledtiocm`.
+- **Amendment (2026-10-29):** the CSP `connect-src` is now `'self' https://*.supabase.co`.
+  - **Why:** the Vercel–Supabase integration decides which project the build
+    uses. A pinned ref in `vercel.json` fell out of step twice, and every
+    browser request was then blocked ("Cannot reach RoboLime cloud").
+  - **Still unchanged:** scripts load only from `'self'`; the bundle carries
+    only one project's public URL and anon key; RLS protects the data.
+  - **Diagnosis aids:** the online error screen shows the configured project
+    ref (public), and an "Enter a claim code instead" button clears a stored
+    sign-in that no longer works.
