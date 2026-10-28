@@ -58,8 +58,7 @@ on the development machine.
    - **never** add a service-role or `sb_secret_` key. The guard refuses
      `EXPO_PUBLIC_*` names containing SERVICE_ROLE/SECRET, `sb_secret_` values,
      and JWTs whose role is not `anon`.
-   - CSP `connect-src` allows only `'self'` and the project origin
-     (`vercel.json`).
+   - CSP `connect-src` allows `'self'` and `https://*.supabase.co`, so it follows whichever project Vercel injects (D53 amendment; `vercel.json`).
 4. **Git integration:** which branch deploys to production.
    - Local `main` and GitHub `main` have diverged.
    - Pushing will deploy whatever `main` holds.
