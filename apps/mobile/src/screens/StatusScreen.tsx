@@ -87,11 +87,11 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
         <View style={styles.titleBlock}>
           <View style={styles.titleRow}>
             <Text accessibilityRole="header" style={textStyles.pageTitle}>
-              {session.robot.displayName}
+              RoboLime
             </Text>
             {session.robot.isSynthetic && <SyntheticBadge />}
           </View>
-          <Text style={textStyles.muted}>{online ? 'RoboLime · online (synchronised records)' : 'RoboLime · field gateway on this computer'}</Text>
+          <Text style={textStyles.muted}>{online ? 'Online · synchronised records' : 'Field gateway on this computer'}</Text>
         </View>
         <StatusPill label={view.connectionLabel} tone={pillTone} />
       </View>

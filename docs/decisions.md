@@ -1711,3 +1711,17 @@ and reverses D33's "no cell progress". CLAUDE.md §4 still marks these
     sheet → results with tiles and map → a downloaded readings CSV, plus the
     laptop layout
   - not verified on a real phone, outdoors, or with real robot data
+## D55 — Crop-list placeholder in Results; header shows "RoboLime"
+
+**Status: DECIDED by the project owner (2026-10-29).**
+
+- **Results:** when no recommendation is stored for a run, and when there are
+  no dosing runs at all, a "Top 5 crops for this field" placeholder shows five
+  slots ("Crop placeholder 1–5", "Category to be sourced", score "—"). A red
+  notice says that no recommendation exists yet. There are no crop names,
+  scores or ranges, so nothing is invented (OPEN_ITEMS #5); stored
+  recommendations display exactly as before.
+- **Header:** the paired screens' title is now **"RoboLime"** instead of the
+  robot's display name. The subtitle names only the data source ("Field
+  gateway on this computer" / "Online · synchronised records"). The SYNTHETIC
+  badge still appears for synthetic robots.

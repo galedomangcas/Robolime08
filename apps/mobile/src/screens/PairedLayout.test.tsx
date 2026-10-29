@@ -101,7 +101,10 @@ describe('paired layout (D50, D54)', () => {
   it('opens on the Field section with progress, the needed-lime summary and a placeholder map', async () => {
     await renderPaired();
     expect(screen.getByRole('tab', { name: 'Field' }).props.accessibilityState).toMatchObject({ selected: true });
-    expect(screen.getByText('Synthetic demo robot')).toBeTruthy();
+    // Header: the app name only, never the robot's name.
+    expect(screen.getByText('RoboLime')).toBeTruthy();
+    expect(screen.getByText('Field gateway on this computer')).toBeTruthy();
+    expect(screen.queryByText('Synthetic demo robot')).toBeNull();
     expect(screen.getByText('Field gateway connected')).toBeTruthy();
     expect(screen.getByText('Working: 7 of 20 cells (35%)')).toBeTruthy();
     expect(screen.getByLabelText('7 of 20 cells')).toBeTruthy();
@@ -142,6 +145,16 @@ describe('paired layout (D50, D54)', () => {
     await act(async () => fireEvent.press(screen.getByRole('tab', { name: 'Expected after lime' })));
     // Limed cell C4: expected post-correction pH 6.00 → at target.
     expect(screen.getByRole('button', { name: 'C4, pH 6.00, At target, limed. Open readings' })).toBeTruthy();
+  });
+
+  it('shows a labelled 5-crop placeholder when no recommendation is stored, with no invented crops or scores', async () => {
+    await renderPaired();
+    await act(async () => fireEvent.press(screen.getByRole('tab', { name: 'Results' })));
+    await act(async () => fireEvent.press(await screen.findByRole('button', { name: 'Dosing run R-0001 (synthetic demo data)' })));
+    expect(await screen.findByText('Top 5 crops for this field')).toBeTruthy();
+    expect(screen.getByText(/Placeholder: no crop recommendation yet/)).toBeTruthy();
+    for (let i = 1; i <= 5; i += 1) expect(screen.getByLabelText(`Placeholder crop slot ${i}, no recommendation yet`)).toBeTruthy();
+    expect(screen.getAllByText('—')).toHaveLength(5);
   });
 
   it('builds research exports on the gateway and reports what it built', async () => {

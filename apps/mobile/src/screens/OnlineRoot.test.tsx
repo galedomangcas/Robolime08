@@ -57,17 +57,19 @@ describe('OnlineRoot (D52)', () => {
     // Only the claim code is asked for: no email, phone or identity field.
     expect(screen.queryByLabelText(/email|phone/i)).toBeNull();
     await enterCode('ABCD-2345-EFGH');
-    expect(await screen.findByText('Synthetic demo robot')).toBeTruthy();
+    expect(await screen.findByText('RoboLime cloud connected')).toBeTruthy();
     expect(auth.signInAnonymously).toHaveBeenCalledTimes(1);
     expect(reader.claimRobot).toHaveBeenCalledWith('ABCD-2345-EFGH');
     expect(await screen.findByText('RoboLime cloud connected')).toBeTruthy();
-    expect(screen.getByText('RoboLime · online (synchronised records)')).toBeTruthy();
+    expect(screen.getByText('Online · synchronised records')).toBeTruthy();
+    // The header names the app, not the robot.
+    expect(screen.queryByText('Synthetic demo robot')).toBeNull();
   });
 
   it('opens straight to the robot when this browser already holds a claim', async () => {
     const auth = fakeAuth(undefined, SESSION);
     await render(<OnlineRoot timers={timers} now={NOW} auth={auth} reader={fakeReader({ claimedRobots: async () => ({ ok: true, data: [ROBOT] }) })} />);
-    expect(await screen.findByText('Synthetic demo robot')).toBeTruthy();
+    expect(await screen.findByText('RoboLime cloud connected')).toBeTruthy();
     expect(auth.signInAnonymously).not.toHaveBeenCalled();
   });
 
@@ -76,7 +78,7 @@ describe('OnlineRoot (D52)', () => {
     await render(<OnlineRoot timers={timers} now={NOW} auth={fakeAuth()} reader={reader} />);
     await enterCode('WRONG');
     expect(await screen.findByText(/That claim code is not correct/)).toBeTruthy();
-    expect(screen.queryByText('Synthetic demo robot')).toBeNull();
+    expect(screen.queryByText('RoboLime cloud connected')).toBeNull();
   });
 
   it('explains rate limiting', async () => {

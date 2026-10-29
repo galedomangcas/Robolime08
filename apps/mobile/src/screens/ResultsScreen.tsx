@@ -23,6 +23,7 @@ import { WIDE_BREAKPOINT, colors, radius } from '../theme';
 import { Icon } from '../ui/Icon';
 import { Card, IconTile, InfoBox, SecondaryButton, SyntheticBadge, textStyles } from '../ui/primitives';
 import { ReadingSheet } from './ReadingSheet';
+import { CropPlaceholder } from './CropPlaceholder';
 import { RunFieldSummary } from './RunFieldSummary';
 
 interface ResultsScreenProps {
@@ -119,6 +120,7 @@ export function ResultsScreen({ dataSource, token, onSessionInvalid }: ResultsSc
         {runs.kind === 'loaded' && runs.data.length > 0 && <Text style={textStyles.note}>{RUN_LIST_NOTE}</Text>}
         <Text style={textStyles.note}>Source: {dataSource.description}.</Text>
       </Card>
+      {runs.kind === 'loaded' && runs.data.length === 0 && <CropPlaceholder />}
     </View>
   );
 }
@@ -345,12 +347,15 @@ function ReadingTable({ rows, onOpen }: { rows: readonly ReadingRow[]; onOpen: (
 function Recommendation({ view }: { view: RecommendationView }) {
   if (view.kind === 'none') {
     return (
-      <Card>
-        <Text accessibilityRole="header" style={textStyles.sectionTitle}>
-          Crop recommendation
-        </Text>
-        <Text style={textStyles.body}>{view.message}</Text>
-      </Card>
+      <>
+        <Card>
+          <Text accessibilityRole="header" style={textStyles.sectionTitle}>
+            Crop recommendation
+          </Text>
+          <Text style={textStyles.body}>{view.message}</Text>
+        </Card>
+        <CropPlaceholder />
+      </>
     );
   }
   const [medianPh, ...conditions] = view.inputs;
