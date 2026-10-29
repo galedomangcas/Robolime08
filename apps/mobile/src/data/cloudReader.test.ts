@@ -132,11 +132,11 @@ describe('cloud reader (read-only, session required)', () => {
     expect(await createCloudReader({ config: CONFIG, session: signedIn, fetch: bad.fetch }).claimedRobotIds()).toEqual({ ok: false, failure: { kind: 'invalid-response' } });
   });
 
-  it('exposes reads plus the one claim RPC (D52): no table write, command or dosing path', async () => {
+  it('exposes reads, the claim RPC (D52) and the manual-control RPCs (D58): no table write or dosing path', async () => {
     const { fetch, calls } = fakeFetch({ status: 200, body: [] });
     const reader = createCloudReader({ config: CONFIG, session: signedIn, fetch });
     expect(Object.keys(reader).sort()).toEqual([
-      'claimRobot', 'claimedRobotIds', 'claimedRobots', 'field', 'robotStatus', 'runReadings', 'runRecommendation', 'runs',
+      'claimRobot', 'claimedRobotIds', 'claimedRobots', 'field', 'manualCommand', 'manualStatus', 'robotStatus', 'runReadings', 'runRecommendation', 'runs',
     ]);
     await reader.claimedRobotIds();
     await reader.claimedRobots();

@@ -50,8 +50,10 @@ export interface ManualCommandRequest {
  * - `rejected`: the robot replied `NACK:<line>` (it did not recognise the command).
  * - `no-ack`: the bridge retried and got no ACK; the robot may or may not have acted.
  * - `superseded`: a newer command was sent before this one was answered.
+ * - `expired` (online only, D58): the gateway did not pick it up in time; never sent.
+ * - `unavailable` (online only, D58): the gateway had no bridge connected; never sent.
  */
-export type ManualCommandOutcome = 'acknowledged' | 'rejected' | 'no-ack' | 'superseded';
+export type ManualCommandOutcome = 'acknowledged' | 'rejected' | 'no-ack' | 'superseded' | 'expired' | 'unavailable';
 
 export interface ManualCommandResult {
   command: ManualControlCommand;

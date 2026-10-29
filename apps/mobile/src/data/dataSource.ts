@@ -51,8 +51,12 @@ export interface FieldDataSource {
     runs(token: string): Promise<GatewayResult<ExportRunsResponse>>;
     csv(token: string, request: ExportCsvRequest): Promise<GatewayResult<ExportCsvResponse>>;
   };
-  /** Manual control over LoRa (D57); only the field gateway on this laptop can reach the robot. */
+  /**
+   * Manual control over LoRa: directly through the field gateway on this laptop
+   * (D57), or online through the cloud relay to that gateway (D58).
+   */
   manualControl: null | {
+    via: 'laptop' | 'online';
     status(token: string): Promise<GatewayResult<ManualStatusResponse>>;
     send(token: string, command: ManualControlCommand): Promise<GatewayResult<ManualCommandResponse>>;
   };
@@ -71,7 +75,11 @@ export function createLocalGatewayDataSource(client: GatewayClient): FieldDataSo
     field: (token) => client.field(token),
     selectField: (token, fieldId) => client.selectField(token, fieldId),
     exports: { runs: (token) => client.exportRuns(token), csv: (token, request) => client.exportCsv(token, request) },
-    manualControl: { status: (token) => client.manualStatus(token), send: (token, command) => client.manualCommand(token, command) },
+    manualControl: {
+      via: 'laptop',
+      status: (token) => client.manualStatus(token),
+      send: (token, command) => client.manualCommand(token, command),
+    },
   };
 }
 
@@ -122,7 +130,11 @@ export function createCloudDataSource(reader: CloudReader, robotId: string): Fie
     // No cloud table holds selections (they are local-only, D52): the caller keeps the choice in this browser.
     selectField: async (_token, fieldId) => ({ ok: true, data: { selection: { fieldId, confirmedAt: new Date().toISOString() } } }),
     exports: null,
-    // The cloud mirror never reaches the robot.
-    manualControl: null,
+    // D58: commands are queued in the cloud; the field gateway relays them while it has internet.
+    manualControl: {
+      via: 'online',
+      status: async () => mapResult(await reader.manualStatus(robotId), (data) => ({ ok: true, data })),
+      send: async (_token, command) => mapResult(await reader.manualCommand(robotId, command), (data) => ({ ok: true, data })),
+    },
   };
 }

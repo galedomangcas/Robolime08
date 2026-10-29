@@ -28,10 +28,11 @@ interface ManualControlScreenProps {
 const LOG_LINES_SHOWN = 15;
 
 /**
- * "Manual control of RoboLime" (D57): drive, pump and actuator commands sent
- * through the field gateway's LoRa bridge. Field laptop only; the online build
- * has no path to the robot. One command is in flight at a time; STOP is never
- * disabled while the bridge is connected and always replaces the pending command.
+ * "Manual control of RoboLime": drive, pump and actuator commands sent through
+ * the field gateway's LoRa bridge, either from the laptop itself (D57) or
+ * online through the cloud relay (D58). One command is in flight at a time;
+ * STOP is never disabled while the bridge is connected and always replaces the
+ * pending command.
  */
 export function ManualControlScreen({ control, token, onSessionInvalid, timers }: ManualControlScreenProps) {
   const [status, setStatus] = useState<ManualStatusResponse | null>(null);
@@ -64,10 +65,11 @@ export function ManualControlScreen({ control, token, onSessionInvalid, timers }
     [control, token],
   );
 
+  const online = control.via === 'online';
   const connected = !gatewayDown && status?.bridge.state === 'connected';
   const autoStopSeconds = Math.round((status?.autoStopMs ?? MANUAL_AUTO_STOP_MS) / 1000);
   const bridge = gatewayDown
-    ? { label: 'Field gateway not running', tone: 'negative' as const }
+    ? { label: online ? 'RoboLime online unreachable' : 'Field gateway not running', tone: 'negative' as const }
     : bridgeLabel(status?.bridge.state ?? null, status?.bridge.port ?? null);
 
   async function send(command: ManualControlCommand) {
@@ -84,7 +86,7 @@ export function ManualControlScreen({ control, token, onSessionInvalid, timers }
       onSessionInvalid();
       return;
     }
-    setLast({ text: sendFailureMessage(command, result.failure), tone: 'negative' });
+    setLast({ text: sendFailureMessage(command, result.failure, control.via), tone: 'negative' });
   }
 
   const busy = inFlight !== null && inFlight.type !== 'STOP_ALL';
@@ -104,10 +106,16 @@ export function ManualControlScreen({ control, token, onSessionInvalid, timers }
         <InfoBox tone="danger" icon="cloudOff">
           <Text style={textStyles.body}>
             {gatewayDown
-              ? 'The field gateway on this laptop is not answering. Start it, then come back to this tab.'
+              ? online
+                ? 'RoboLime online could not be reached. Check this device’s internet connection.'
+                : 'The field gateway on this laptop is not answering. Start it, then come back to this tab.'
               : (status?.bridge.detail ?? 'Waiting for the LoRa bridge.')}
           </Text>
-          <Text style={textStyles.note}>Commands are disabled until the LoRa bridge is connected over USB.</Text>
+          <Text style={textStyles.note}>
+            {online
+              ? 'Commands are disabled until the field gateway is online with its LoRa bridge connected.'
+              : 'Commands are disabled until the LoRa bridge is connected over USB.'}
+          </Text>
         </InfoBox>
       )}
 
@@ -116,6 +124,12 @@ export function ManualControlScreen({ control, token, onSessionInvalid, timers }
           These buttons move the real robot over LoRa. Keep people and hands clear. Every drive, pump or actuator command
           stops by itself after {autoStopSeconds} s; press Stop everything to stop sooner.
         </Text>
+        {online && (
+          <Text style={textStyles.body}>
+            You may not be able to see the robot. Online commands travel through the internet to the field laptop and
+            take a few seconds; a command not picked up within 10 s is dropped, never sent late.
+          </Text>
+        )}
         <Text style={textStyles.note}>
           Manual pump use is not part of a dosing run and is not recorded as dispensed lime.
         </Text>
@@ -183,7 +197,7 @@ export function ManualControlScreen({ control, token, onSessionInvalid, timers }
           Recent commands
         </Text>
         {status === null || status.recentCommands.length === 0 ? (
-          <Text style={textStyles.muted}>No commands sent since the gateway started.</Text>
+          <Text style={textStyles.muted}>{online ? 'No recent commands.' : 'No commands sent since the gateway started.'}</Text>
         ) : (
           status.recentCommands.map((result) => {
             const message = outcomeMessage(result);
@@ -197,7 +211,7 @@ export function ManualControlScreen({ control, token, onSessionInvalid, timers }
         )}
       </Card>
 
-      <Card>
+      {!online && <Card>
         <Text accessibilityRole="header" style={textStyles.sectionTitle}>
           Bridge messages
         </Text>
@@ -213,7 +227,7 @@ export function ManualControlScreen({ control, token, onSessionInvalid, timers }
             ))}
           </View>
         )}
-      </Card>
+      </Card>}
     </View>
   );
 }

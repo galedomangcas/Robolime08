@@ -50,18 +50,33 @@ export function outcomeMessage(result: ManualCommandResult): { text: string; ton
       };
     case 'superseded':
       return { text: `${name}: replaced by a newer command before the robot replied.`, tone: 'neutral' };
+    case 'expired':
+      return { text: `${name}: not sent. The field gateway did not pick it up within 10 s (it may be offline).`, tone: 'negative' };
+    case 'unavailable':
+      return { text: `${name}: not sent. The LoRa bridge was not connected to the field laptop.`, tone: 'negative' };
   }
 }
 
-export function sendFailureMessage(command: ManualControlCommand, failure: GatewayFailure): string {
+export type ManualVia = 'laptop' | 'online';
+
+export function sendFailureMessage(command: ManualControlCommand, failure: GatewayFailure, via: ManualVia = 'laptop'): string {
   const name = describeManualControlCommand(command);
   if (failure.kind === 'api' && failure.code === 'MANUAL_BRIDGE_UNAVAILABLE') {
     return `${name}: not sent. The LoRa bridge is not connected to this laptop.`;
   }
-  if (isSessionInvalid(failure)) return `${name}: not sent. Pair this device again.`;
-  if (failure.kind === 'timeout') return `${name}: the gateway did not answer in time. The robot may or may not have received it.`;
-  if (failure.kind === 'unreachable') return `${name}: not sent. The field gateway on this laptop is not running.`;
-  return `${name}: the gateway could not send this command.`;
+  if (isSessionInvalid(failure)) return via === 'online' ? `${name}: not sent. Sign in again.` : `${name}: not sent. Pair this device again.`;
+  if (failure.kind === 'api' && failure.status === 429) return `${name}: not sent. Too many commands in the last minute; wait a moment.`;
+  if (failure.kind === 'timeout') {
+    return via === 'online'
+      ? `${name}: no answer from the field gateway in time. The robot may or may not have received it.`
+      : `${name}: the gateway did not answer in time. The robot may or may not have received it.`;
+  }
+  if (failure.kind === 'unreachable') {
+    return via === 'online'
+      ? `${name}: not sent. RoboLime online could not be reached; check this device's internet.`
+      : `${name}: not sent. The field gateway on this laptop is not running.`;
+  }
+  return via === 'online' ? `${name}: RoboLime online could not queue this command.` : `${name}: the gateway could not send this command.`;
 }
 
 /** "12:03:04" in the laptop's local time. */

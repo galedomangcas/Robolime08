@@ -11,6 +11,11 @@
  * MANUAL CONTROL (D57): --serial-port <COM5 | /dev/ttyUSB0> (or GATEWAY_SERIAL_PORT)
  * connects the LoRa bridge so the app's "Manual control" tab can command the
  * robot. Loopback only; refused with --lan.
+ * ONLINE MANUAL CONTROL (D58): with --serial-port AND SUPABASE_URL +
+ * SUPABASE_SERVICE_ROLE_KEY set, the gateway also relays commands queued on
+ * the Vercel site / Android app by anyone who claimed the robot, whenever this
+ * laptop has internet. GATEWAY_RELAY_ROBOT_ID picks the robot if the database
+ * has more than one.
  * DEMO ONLY (D47): --demo-pairing (or GATEWAY_DEMO_PAIRING=on) accepts the fixed
  * demo pairing code; it requires loopback binding and a demo database, and is
  * never for field use.
@@ -42,6 +47,10 @@ try {
     lan: args.lan, // undefined when the flag is absent: GATEWAY_LAN_MODE decides
     demoPairing: args['demo-pairing'], // undefined when absent: GATEWAY_DEMO_PAIRING decides (default off)
     serialPort: args['serial-port'], // undefined when absent: GATEWAY_SERIAL_PORT decides (default off)
+    onRelayState: (state) =>
+      process.stdout.write(
+        `${new Date().toISOString()} online manual control: ${state === 'online' ? 'connected to RoboLime online' : 'cannot reach RoboLime online (no internet?); retrying'}\n`,
+      ),
     onRequest: ({ method, path, status, durationMs }) =>
       process.stdout.write(`${new Date().toISOString()} ${method} ${path} ${status} ${durationMs}ms\n`),
     onError: ({ errorName, method, path }) =>
@@ -83,6 +92,7 @@ const manualNotice = running.serialPort
   ? [
       `MANUAL CONTROL ON (D57): LoRa bridge on ${running.serialPort}. The app can drive the robot, pump and`,
       'actuator. Keep people clear of the robot; every manual output stops by itself after 5 s.',
+      running.onlineManualControl ?? '',
     ]
   : ['Manual control off (start with --serial-port <port> to connect the LoRa bridge).'];
 const demoWarning = running.demoPairing

@@ -1,11 +1,20 @@
 import {
+  MANUAL_AUTO_STOP_MS,
+  MANUAL_RELAY_STALE_SECONDS,
   ROBOT_COMPONENTS,
   ROBOT_STATE_BY_CODE,
   STALE_THRESHOLD_SECONDS,
   decodeErrorFlags,
+  manualControlLine,
+  parseManualControlLine,
   type CellReading,
   type CropScore,
   type FieldResponse,
+  type ManualBridgeState,
+  type ManualCommandOutcome,
+  type ManualCommandResult,
+  type ManualControlCommand,
+  type ManualStatusResponse,
   type RobotState,
   type RobotStatus,
   type RobotStatusResponse,
@@ -36,9 +45,10 @@ import {
  *
  * Rules:
  * - Reads are GET only: the cloud mirror is written by the gateway's service
- *   role, never by the app. The one POST is `claim_robot(code)`, a server-side
- *   check of a claim code (D52); the client never names a robot to claim and
- *   never writes a table. Nothing here reaches the robot.
+ *   role, never by the app. The POSTs are RPCs: `claim_robot(code)`, a
+ *   server-side check of a claim code (D52; the client never names a robot to
+ *   claim), and the manual-control RPCs (D58), which queue a command for the
+ *   field gateway to relay to the robot. The app never writes a table directly.
  * - A signed-in user's access token is required. Without one, no request is
  *   made (`auth-required`); the public key alone is never used as a bearer.
  * - Row Level Security decides visibility: a robot that is not claimed simply
@@ -83,6 +93,58 @@ export interface CloudReader {
   runRecommendation(robotId: string, runId: string): Promise<CloudResult<RunRecommendationResponse | null>>;
   /** The robot's active field and its cells; `null` if none is synchronised (D54). */
   field(robotId: string): Promise<CloudResult<FieldResponse | null>>;
+  /** Online manual control (D58): whether the field gateway relay is live, and recent commands. */
+  manualStatus(robotId: string): Promise<CloudResult<ManualStatusResponse>>;
+  /**
+   * Online manual control (D58): queues one command and waits for the gateway's
+   * verdict. `http` 429 when rate-limited; `timeout` if no verdict arrives.
+   */
+  manualCommand(robotId: string, command: ManualControlCommand): Promise<CloudResult<ManualCommandResult>>;
+}
+
+/** How often, and for how long, `manualCommand` re-reads the queued command (10 s pick-up + bridge retries). */
+const MANUAL_RESULT_POLL_MS = 500;
+const MANUAL_RESULT_WAIT_MS = 20_000;
+const FINAL_MANUAL_STATUSES: ReadonlySet<unknown> = new Set(['acknowledged', 'rejected', 'no-ack', 'superseded', 'expired', 'unavailable']);
+const BRIDGE_STATES: ReadonlySet<unknown> = new Set(['not-configured', 'connecting', 'connected', 'disconnected']);
+
+function ago(seconds: number): string {
+  if (seconds < 120) return `${Math.round(seconds)} s`;
+  if (seconds < 7200) return `${Math.round(seconds / 60)} min`;
+  return `${Math.round(seconds / 3600)} h`;
+}
+
+/** Relay heartbeat row (or none) → the bridge part of the status, judged by the server-computed age. */
+export function relayBridge(row: unknown): ManualStatusResponse['bridge'] | null {
+  if (row === undefined) {
+    return {
+      state: 'not-configured',
+      port: null,
+      detail: 'The field gateway has not connected to the cloud yet. It needs internet, the LoRa bridge and its Supabase settings.',
+    };
+  }
+  if (!isObject(row) || !BRIDGE_STATES.has(row.bridge_state) || !isFiniteNumber(row.seen_seconds_ago)) return null;
+  if (row.seen_seconds_ago > MANUAL_RELAY_STALE_SECONDS) {
+    return {
+      state: 'disconnected',
+      port: null,
+      detail: `The field gateway was last online ${ago(row.seen_seconds_ago)} ago. It needs internet to relay commands to the robot.`,
+    };
+  }
+  const state = row.bridge_state as ManualBridgeState;
+  return {
+    state,
+    port: null,
+    detail: state === 'connected' ? null : 'The field gateway is online, but its LoRa bridge is not connected over USB.',
+  };
+}
+
+/** One finished `manual_commands` row → a command result; null while pending/sent or if malformed. */
+export function manualResultFromRow(row: unknown): ManualCommandResult | null {
+  if (!isObject(row) || typeof row.line !== 'string' || !FINAL_MANUAL_STATUSES.has(row.status)) return null;
+  const command = parseManualControlLine(row.line);
+  if (command === null || !isIsoDateTime(row.requested_at) || !isIsoDateTime(row.finished_at)) return null;
+  return { command, line: row.line, outcome: row.status as ManualCommandOutcome, sentAt: row.requested_at, finishedAt: row.finished_at };
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -198,11 +260,14 @@ export function createCloudReader(options: {
   session: CloudSessionProvider;
   fetch?: FetchLike;
   timeoutMs?: number;
+  /** Tests only: replaces the wait between manual-command result checks. */
+  sleep?: (ms: number) => Promise<void>;
 }): CloudReader {
   const doFetch: FetchLike = options.fetch ?? ((url, init) => fetch(url, init));
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
-  /** GET, or POST with a JSON body (only the claim RPC). */
+  /** GET, or POST with a JSON body (the claim and manual-control RPCs). */
   async function request(pathAndQuery: string, body?: unknown): Promise<CloudResult<unknown[]>> {
     const { config } = options;
     if (!config.ok) return { ok: false, failure: { kind: 'not-configured' } };
@@ -443,6 +508,42 @@ export function createCloudReader(options: {
         }),
       };
       return isFieldResponse(response) ? { ok: true, data: response } : INVALID;
+    },
+
+    async manualStatus(robotId) {
+      if (!UUID.test(robotId)) return INVALID;
+      const relay = await request('rpc/manual_relay_status', { p_robot_id: robotId });
+      if (!relay.ok) return relay;
+      const bridge = relayBridge(relay.data[0]);
+      if (bridge === null) return INVALID;
+      const recent = await get(`manual_commands?select=line,status,requested_at,finished_at&robot_id=eq.${robotId}&order=seq.desc&limit=20`);
+      if (!recent.ok) return recent;
+      const recentCommands: ManualCommandResult[] = [];
+      for (const row of recent.data) {
+        if (!isObject(row)) return INVALID;
+        const result = manualResultFromRow(row);
+        if (result !== null) recentCommands.push(result);
+      }
+      return { ok: true, data: { bridge, autoStopMs: MANUAL_AUTO_STOP_MS, recentCommands, bridgeLog: [] } };
+    },
+
+    async manualCommand(robotId, command) {
+      if (!UUID.test(robotId)) return INVALID;
+      const queued = await request('rpc/request_manual_command', { p_robot_id: robotId, p_line: manualControlLine(command) });
+      if (!queued.ok) return queued;
+      const row = queued.data[0];
+      if (!isObject(row)) return INVALID;
+      if (row.result === 'rate-limited') return { ok: false, failure: { kind: 'http', status: 429 } };
+      if (row.result !== 'queued' || typeof row.id !== 'string' || !UUID.test(row.id)) return INVALID;
+      const deadline = Date.now() + MANUAL_RESULT_WAIT_MS;
+      while (Date.now() < deadline) {
+        await sleep(MANUAL_RESULT_POLL_MS);
+        const current = await get(`manual_commands?select=line,status,requested_at,finished_at&id=eq.${row.id}`);
+        if (!current.ok) continue;
+        const result = manualResultFromRow(current.data[0]);
+        if (result !== null) return { ok: true, data: result };
+      }
+      return { ok: false, failure: { kind: 'timeout' } };
     },
   };
 }

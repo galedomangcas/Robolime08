@@ -79,6 +79,7 @@ try {
   psqlFile(join(supabaseDir, 'seeds', 'demo_synthetic.sql'));
   psqlFile(join(here, 'rls_robot_scope.test.sql'));
   psqlFile(join(here, 'claim_flow.test.sql'));
+  psqlFile(join(here, 'manual_control.test.sql'));
 
   if (genTypesOut) {
     console.log('-- attempting Supabase type generation against the throwaway cluster');

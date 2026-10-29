@@ -47,6 +47,46 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"manual_commands": {
+                  Row: {
+                    "finished_at": string | null,"id": string,"line": string,"picked_up_at": string | null,"requested_at": string,"requested_by": string,"robot_id": string,"seq": number,"status": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "finished_at"?: string | null,"id"?: string,"line": string,"picked_up_at"?: string | null,"requested_at"?: string,"requested_by": string,"robot_id": string,"seq"?: never,"status"?: string
+                  }
+                  Update: {
+                    "finished_at"?: string | null,"id"?: string,"line"?: string,"picked_up_at"?: string | null,"requested_at"?: string,"requested_by"?: string,"robot_id"?: string,"seq"?: never,"status"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "manual_commands_robot_id_fkey"
+      columns: ["robot_id"]
+isOneToOne: false
+      referencedRelation: "robots"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"manual_relay_heartbeats": {
+                  Row: {
+                    "bridge_state": string,"robot_id": string,"seen_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "bridge_state": string,"robot_id": string,"seen_at"?: string
+                  }
+                  Update: {
+                    "bridge_state"?: string,"robot_id"?: string,"seen_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "manual_relay_heartbeats_robot_id_fkey"
+      columns: ["robot_id"]
+isOneToOne: true
+      referencedRelation: "robots"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"readings": {
                   Row: {
                     "attempt_count": number,"cell_index": number,"cloud_received_at": string,"dose_volume_ml": number,"ec": number,"expected_post_correction_ph": number | null,"gateway_received_at": string,"gps_latitude": number | null,"gps_longitude": number | null,"id": string,"moisture_percent": number,"ph": number,"raw_flags": number,"robot_id": string,"robot_recorded_at": string,"run_id": string,"seq": number,"temperature_c": number
@@ -305,7 +345,35 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            [_ in never]: never
+            "claim_robot":
+{ Args: { "p_code": string }; Returns: {
+              "display_name": string,"is_synthetic": boolean,"result": string,"robot_id": string
+            }[]
+                           },
+"finish_manual_command":
+{ Args: { "p_id": string,"p_status": string }; Returns: boolean
+                           },
+"manual_relay_status":
+{ Args: { "p_robot_id": string }; Returns: {
+              "bridge_state": string,"seen_seconds_ago": number
+            }[]
+                           },
+"provision_robot_claim_code":
+{ Args: { "p_code_sha256": string,"p_expires_at"?: string,"p_source_robot_id": string }; Returns: string
+                           },
+"request_manual_command":
+{ Args: { "p_line": string,"p_robot_id": string }; Returns: {
+              "id": string,"requested_at": string,"result": string
+            }[]
+                           },
+"revoke_robot_claims":
+{ Args: { "p_source_robot_id": string }; Returns: number
+                           },
+"take_manual_commands":
+{ Args: { "p_bridge_state": string,"p_max_age_seconds"?: number,"p_source_robot_id": string }; Returns: {
+              "id": string,"line": string,"requested_at": string
+            }[]
+                           }
           }
           Enums: {
             [_ in never]: never

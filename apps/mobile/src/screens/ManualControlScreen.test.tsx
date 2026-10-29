@@ -14,9 +14,14 @@ function status(state: ManualStatusResponse['bridge']['state'], detail: string |
   return { bridge: { state, port: state === 'not-configured' ? null : 'COM5', detail }, autoStopMs: 5_000, recentCommands: [], bridgeLog: [] };
 }
 
-function fakeControl(initial: ManualStatusResponse, reply: (command: ManualControlCommand) => GatewayResult<ManualCommandResult>) {
+function fakeControl(
+  initial: ManualStatusResponse,
+  reply: (command: ManualControlCommand) => GatewayResult<ManualCommandResult>,
+  via: 'laptop' | 'online' = 'laptop',
+) {
   const sent: ManualControlCommand[] = [];
   const control: NonNullable<FieldDataSource['manualControl']> = {
+    via,
     status: async () => ({ ok: true, data: initial }),
     send: async (_token, command) => {
       sent.push(command);
@@ -59,8 +64,28 @@ describe('Manual control of RoboLime (D57)', () => {
     expect(fake.sent).toEqual([]);
   });
 
+  it('online (D58): warns that the robot may not be visible, hides the bridge log, and sends through the relay', async () => {
+    const fake = fakeControl({ ...status('connected'), bridge: { state: 'connected', port: null, detail: null } }, ack, 'online');
+    await render(<ManualControlScreen control={fake.control} token="t" timers={noTimers} onSessionInvalid={() => undefined} />);
+    expect(await screen.findByText('LoRa bridge connected')).toBeTruthy();
+    expect(screen.getByText(/You may not be able to see the robot/)).toBeTruthy();
+    expect(screen.queryByText('Bridge messages')).toBeNull();
+    await act(async () => fireEvent.press(screen.getByRole('button', { name: 'STOP EVERYTHING' })));
+    expect(fake.sent).toEqual([{ type: 'STOP_ALL' }]);
+  });
+
+  it('online (D58): explains a gateway that is offline', async () => {
+    const detail = 'The field gateway was last online 5 min ago. It needs internet to relay commands to the robot.';
+    const fake = fakeControl({ ...status('disconnected', detail), bridge: { state: 'disconnected', port: null, detail } }, ack, 'online');
+    await render(<ManualControlScreen control={fake.control} token="t" timers={noTimers} onSessionInvalid={() => undefined} />);
+    expect(await screen.findByText(detail)).toBeTruthy();
+    expect(screen.getByText(/until the field gateway is online/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Forward' }).props.accessibilityState).toMatchObject({ disabled: true });
+  });
+
   it('shows an unreachable gateway as not running', async () => {
     const control: NonNullable<FieldDataSource['manualControl']> = {
+      via: 'laptop',
       status: async () => ({ ok: false, failure: { kind: 'unreachable' } }),
       send: async () => ({ ok: false, failure: { kind: 'unreachable' } }),
     };
@@ -71,6 +96,7 @@ describe('Manual control of RoboLime (D57)', () => {
   it('returns to pairing when the gateway rejects the session', async () => {
     const onSessionInvalid = jest.fn();
     const control: NonNullable<FieldDataSource['manualControl']> = {
+      via: 'laptop',
       status: async () => ({ ok: false, failure: { kind: 'api', status: 401, code: 'SESSION_EXPIRED', retryAfterSeconds: null } }),
       send: async () => ({ ok: false, failure: { kind: 'unreachable' } }),
     };

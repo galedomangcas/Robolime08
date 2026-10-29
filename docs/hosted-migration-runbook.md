@@ -321,3 +321,19 @@ Status: **rehearsed; hosted run pending (owner runs it; needs the DB password).*
   exists, and `supabase db push` must not be run before a repair per
   `migration-history-plan.md`. The legacy cleanup `20261022000000` was not
   needed on the empty project.
+### 7.3 Manual-control relay applied via the SQL Editor (2026-10-30, D58)
+- **Applied:** `supabase/ops/sql-editor-20261029-manual-control-relay.sql`
+  (one transaction). It has a precheck (cloud mirror and claim flow present;
+  manual-control objects absent), `20261029000000_manual_control_relay`, and a
+  postcheck (RLS, policies, grants, EXECUTE, SECURITY DEFINER with pinned
+  `search_path`). The owner ran it in the Dashboard SQL Editor.
+- **Rehearsed first** on a throwaway local PostgreSQL holding only the shim and
+  the two applied migrations: committed, a second run was refused at the
+  precheck, and the relay and claim tests passed.
+- **Hosted verification** (read-only, run by the owner; results reported in
+  chat, not captured as a file):
+  - 2 new tables, both with RLS
+  - `request_manual_command` executable by authenticated and not by anon
+  - `take_manual_commands` not executable by authenticated
+- **Not done:** migration history was still not written (no history table);
+  `supabase db push` must still not be run.

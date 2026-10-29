@@ -7,6 +7,6 @@ describe('local gateway data source', () => {
     const source = createLocalGatewayDataSource(createGatewayClient({ baseUrl: '', fetch }));
     expect(source.kind).toBe('local-gateway');
     expect(Object.keys(source).sort()).toEqual(['description', 'exports', 'field', 'kind', 'manualControl', 'robotStatus', 'runReadings', 'runRecommendation', 'runs', 'selectField', 'sourceName']);
-    expect(Object.keys(source.manualControl ?? {}).sort()).toEqual(['send', 'status']);
+    expect(Object.keys(source.manualControl ?? {}).sort()).toEqual(['send', 'status', 'via']);
   });
 });

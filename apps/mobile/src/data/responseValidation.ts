@@ -304,7 +304,7 @@ export function isExportCsvResponse(v: unknown): v is ExportCsvResponse {
   );
 }
 
-const MANUAL_OUTCOMES: ReadonlySet<unknown> = new Set(['acknowledged', 'rejected', 'no-ack', 'superseded'] satisfies ManualCommandOutcome[]);
+const MANUAL_OUTCOMES: ReadonlySet<unknown> = new Set(['acknowledged', 'rejected', 'no-ack', 'superseded', 'expired', 'unavailable'] satisfies ManualCommandOutcome[]);
 const BRIDGE_STATES: ReadonlySet<unknown> = new Set(['not-configured', 'connecting', 'connected', 'disconnected'] satisfies ManualBridgeState[]);
 
 export function isManualCommandResult(v: unknown): v is ManualCommandResult {

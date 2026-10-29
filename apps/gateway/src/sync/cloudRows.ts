@@ -19,8 +19,11 @@ import { OUTBOX_SYNC_ORDER, type OutboxEntityType } from '../store/outbox';
  */
 type CloudTables = CloudDatabase['public']['Tables'];
 
-/** Mirrored tables. robot_claims is cloud-only and written by a trusted process, never by sync. */
-export type CloudTable = Exclude<keyof CloudTables, 'robot_claims'>;
+/**
+ * Mirrored tables. robot_claims is cloud-only and written by a trusted process, never by sync.
+ * The manual-control relay tables (D58) are cloud-only too: written through RPCs, never mirrored.
+ */
+export type CloudTable = Exclude<keyof CloudTables, 'robot_claims' | 'manual_commands' | 'manual_relay_heartbeats'>;
 
 export interface JsonbValue {
   jsonb: string;

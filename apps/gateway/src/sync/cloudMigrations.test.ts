@@ -13,6 +13,7 @@ const MIGRATIONS_DIR = fileURLToPath(new URL('../../../../supabase/migrations/',
 const CLEANUP = '20261022000000_remove_legacy_hosted_schema.sql';
 const TARGET = '20261023000000_cloud_mirror_initial.sql';
 const CLAIM_FLOW = '20261028000000_online_claim_flow.sql';
+const MANUAL_RELAY = '20261029000000_manual_control_relay.sql';
 
 /** Lower-cased SQL with `--` comments removed and whitespace collapsed. */
 function code(file: string): string {
@@ -73,9 +74,9 @@ function guardRefuses(catalog: Catalog): boolean {
 }
 
 describe('cloud migrations: order', () => {
-  it('sorts the legacy cleanup immediately before the target schema, then the claim flow (D52)', () => {
+  it('sorts the legacy cleanup immediately before the target schema, then the claim flow (D52) and the manual-control relay (D58)', () => {
     const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
-    expect(files).toEqual([CLEANUP, TARGET, CLAIM_FLOW]);
+    expect(files).toEqual([CLEANUP, TARGET, CLAIM_FLOW, MANUAL_RELAY]);
   });
 });
 

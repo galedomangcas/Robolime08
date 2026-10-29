@@ -7,6 +7,10 @@
  * (`Robot Code/Final Code`), sent as one line over USB serial to the gateway
  * LoRa bridge, which relays it to the robot and waits for `ACK:<command>`.
  *
+ * Online (D58): the Vercel site and Android app queue the same lines in
+ * hosted Supabase (`manual_commands`); the gateway relays them while it has
+ * internet. Commands older than MANUAL_CLOUD_MAX_AGE_SECONDS are never sent.
+ *
  * Separate from the binary D21 contract (`manualCommands.ts`), which stays
  * disabled: its wire format and limits are still unsigned.
  *
@@ -23,6 +27,12 @@ export const MANUAL_CONTROL_DECISION = 'D57';
 
 /** Robot-enforced limit for every output started by a LoRa command (drive, pump, actuator). */
 export const MANUAL_AUTO_STOP_MS = 5_000;
+
+/** D58: an online command not picked up by the gateway within this many seconds expires unsent. */
+export const MANUAL_CLOUD_MAX_AGE_SECONDS = 10;
+
+/** D58: the online relay counts as offline when the gateway has not polled for this long. */
+export const MANUAL_RELAY_STALE_SECONDS = 10;
 
 /** BTS7960 PWM duty range accepted by `finalcode_sprint1_esp.ino`. */
 export const MANUAL_PWM_MIN = 0;
@@ -74,6 +84,16 @@ export function manualControlLine(command: ManualControlCommand): string {
     case 'PUMP':
       return `PUMP_${command.action}`;
   }
+}
+
+/** Inverse of {@link manualControlLine}; null for anything else (cloud rows, D58). */
+export function parseManualControlLine(line: string): ManualControlCommand | null {
+  if (line === 'STOP_ALL') return { type: 'STOP_ALL' };
+  if (line === 'ACTUATOR_EXTEND' || line === 'ACTUATOR_RETRACT') return { type: 'ACTUATOR', action: line === 'ACTUATOR_EXTEND' ? 'EXTEND' : 'RETRACT' };
+  if (line === 'PUMP_ON' || line === 'PUMP_OFF') return { type: 'PUMP', action: line === 'PUMP_ON' ? 'ON' : 'OFF' };
+  const drive = /^DRIVE:(FORWARD|REVERSE|LEFT|RIGHT):(0|[1-9]\d{0,2})$/.exec(line);
+  if (!drive) return null;
+  return parseManualControlCommand({ type: 'DRIVE', direction: drive[1], pwm: Number(drive[2]) });
 }
 
 /** Plain-English label for the app. */

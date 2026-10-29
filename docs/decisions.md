@@ -1792,3 +1792,53 @@ firmware revision that D45 requires for the files listed below.
   `arduino-cli` on this machine) and nothing was run on real hardware.
 - **Manuscript mismatch:** the manuscript and `CLAUDE.md` describe the apps
   as observe-only. Both need to mention laptop-only manual control (#44).
+## D58 — Online manual control from the Vercel site and Android app
+
+**Status: DECIDED (project owner, 2026-10-29).** Extends D57. The owner
+decided that everyone who uses the app online can manually control the robot.
+
+- **Owner choices:**
+  - the gateway **always accepts** online commands while it runs with the
+    bridge and internet; there is no on-site opt-in
+  - **who:** any online user holding an active claim on the robot (the D52
+    claim code)
+- **Path:** online app → `request_manual_command()` → hosted Supabase
+  `manual_commands` → gateway relay (service role, polls
+  `take_manual_commands()` every 1 s) → USB LoRa bridge → robot. The verdict
+  goes back through `finish_manual_command()`. Migration:
+  `supabase/migrations/20261029000000_manual_control_relay.sql`.
+- **Works only while the gateway laptop has internet**, runs with
+  `--serial-port`, has `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set, and
+  is within LoRa range of the robot. At Calatagan without signal, online
+  control is unavailable; the laptop tab (D57) still works.
+- **Safety:**
+  - a command not picked up within **10 s** is marked `expired` and never sent
+  - when the gateway's bridge is not connected, queued commands are answered
+    `unavailable` at once
+  - only the newest pending command is sent; older ones are `superseded`
+  - the robot's 5 s auto-stop (D57) still applies
+  - 60 commands per user per minute
+  - the app shows "you may not be able to see the robot", disables controls
+    when the gateway has not checked in for 10 s, and reports only the
+    bridge's verdict
+- **Security:**
+  - clients cannot write the tables
+  - `request_manual_command()` checks the claim and validates the line
+    (database CHECK of the exact firmware commands)
+  - the relay functions are service-role only
+  - RLS limits command history and heartbeats to claimed robots
+- **Cloud-only tables:** not mirrored by sync (`CloudTable` excludes them).
+  The relay sends no robot data, only command statuses and a heartbeat, so a
+  demo database may use it.
+- **Verified:**
+  - migration and RLS/relay SQL tests on a throwaway local PostgreSQL
+  - regenerated Supabase types
+  - gateway relay tests (fake RPC and bridge)
+  - app reader and screen tests
+- **Not verified:**
+  - the migration was applied to the hosted project on 2026-10-30 by the owner in the SQL Editor (runbook 7.3), and the owner's read-only check passed; no other online test has been run
+  - the Vercel deployment has not been checked
+  - nothing has run on real hardware or over a real internet link
+- **Manuscript mismatch:** remote control over the internet must be added to
+  the manuscript amendment (#44), including that the operator may not see
+  the robot.
