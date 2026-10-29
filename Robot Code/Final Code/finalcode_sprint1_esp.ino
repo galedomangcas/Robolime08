@@ -18,7 +18,10 @@ const int LORA_MOSI = 23;
 const int LORA_SS   = 5;     
 const int LORA_RST  = 14;    
 const int LORA_DIO0 = 2;     
-const long LORA_FREQUENCY = 915E6; 
+// Was 915E6. Set to 433E6 to match the gateway bridge and the documented
+// Ra-02 (SX1278, 433 MHz band) modules (D57, OPEN_ITEMS #41). MUST MATCH
+// finalcode_sprint1_gateway.ino; the hardware owner must confirm the band.
+const long LORA_FREQUENCY = 433E6;
 
 // --- Battery Voltage Monitoring Pin ---
 const int BATTERY_PIN = 35;           
@@ -34,6 +37,15 @@ const int LEFT_LPWM = 12;
 const int RIGHT_EN  = 25;
 const int RIGHT_RPWM = 27;
 const int RIGHT_LPWM = 26;
+
+// --- Manual control over LoRa (app "Manual control of RoboLime", decision D57) ---
+// Every output started by a LoRa command stops by itself after this long,
+// even if the STOP never arrives (lost packet, out of range, laptop closed).
+// Chosen by the project owner; the hardware owner must confirm it.
+const unsigned long MANUAL_AUTO_STOP_MS = 5000;
+unsigned long motorStopAt = 0;     // 0 = no pending auto-stop
+unsigned long pumpStopAt = 0;
+unsigned long actuatorStopAt = 0;
 
 TinyGPSPlus gps;
 
@@ -127,6 +139,9 @@ void loop() {
       uartHandshakeSuccess = true;
       Serial.print("Nano says <- ");
       Serial.println(incoming);
+      if (incoming == "NANO_READY") {
+        Serial2.println("ESP32_ACK");  // completes the Nano's handshake so it stops pinging
+      }
     }
   }
 
@@ -148,9 +163,16 @@ void loop() {
     while (LoRa.available()) {
       loraPacket += (char)LoRa.read();
     }
+    loraPacket.trim();
     Serial.print("\n[LoRa RX] Content: ");
     Serial.println(loraPacket);
+    handleLoRaPacket(loraPacket);
   }
+
+  // =========================================================================
+  // 4b. Manual-control auto-stop (MANUAL_AUTO_STOP_MS)
+  // =========================================================================
+  checkAutoStop();
 
   // =========================================================================
   // 5. Periodic Status Prints (Every 5 seconds)
@@ -233,7 +255,8 @@ void handleMenuInput(String input) {
   }
 }
 
-void executeMovement(int directionOption, int pwm) {
+// Drives the BTS7960s. Returns false (and stops) for an unknown direction.
+bool driveMotors(int directionOption, int pwm) {
   digitalWrite(LEFT_EN, HIGH);
   digitalWrite(RIGHT_EN, HIGH);
 
@@ -242,31 +265,36 @@ void executeMovement(int directionOption, int pwm) {
       currentMotionState = "FORWARD";
       analogWrite(LEFT_RPWM, pwm);  analogWrite(LEFT_LPWM, 0);
       analogWrite(RIGHT_RPWM, pwm); analogWrite(RIGHT_LPWM, 0);
-      break;
+      return true;
 
     case 2: // Reversing
       currentMotionState = "REVERSING";
       analogWrite(LEFT_RPWM, 0);  analogWrite(LEFT_LPWM, pwm);
       analogWrite(RIGHT_RPWM, 0); analogWrite(RIGHT_LPWM, pwm);
-      break;
+      return true;
 
     case 3: // Turning Left (Right driver only)
       currentMotionState = "TURNING LEFT";
       analogWrite(LEFT_RPWM, 0);    analogWrite(LEFT_LPWM, 0);
       analogWrite(RIGHT_RPWM, pwm); analogWrite(RIGHT_LPWM, 0);
-      break;
+      return true;
 
     case 4: // Turning Right (Left driver only)
       currentMotionState = "TURNING RIGHT";
       analogWrite(LEFT_RPWM, pwm);  analogWrite(LEFT_LPWM, 0);
       analogWrite(RIGHT_RPWM, 0);   analogWrite(RIGHT_LPWM, 0);
-      break;
+      return true;
 
     default:
-      currentMotionState = "STOPPED";
       stopMotors();
-      Serial.println("[WARNING] Invalid choice. Stopping motors.");
-      break;
+      return false;
+  }
+}
+
+void executeMovement(int directionOption, int pwm) {
+  motorStopAt = 0;  // USB bench menu: no LoRa auto-stop; stop from the menu
+  if (!driveMotors(directionOption, pwm)) {
+    Serial.println("[WARNING] Invalid choice. Stopping motors.");
   }
 
   // Print Status Report immediately after execution
@@ -283,6 +311,144 @@ void stopMotors() {
   analogWrite(RIGHT_RPWM, 0);
   analogWrite(RIGHT_LPWM, 0);
   currentMotionState = "STOPPED";
+  motorStopAt = 0;
+}
+
+// --- Manual control over LoRa (D57) ---
+// Commands come from the laptop gateway through the LoRa bridge
+// (finalcode_sprint1_gateway.ino). Every recognised command is answered with
+// "ACK:<command>", anything else with "NACK:<command>". The bridge retries a
+// command until it sees the ACK, so a repeated command is simply re-applied.
+//   STOP_ALL | STOP            motors off + Nano STOP_ALL (pump and actuator off)
+//   MOTOR_STOP                 motors off
+//   DRIVE:<DIR>:<PWM>          DIR = FORWARD | REVERSE | LEFT | RIGHT, PWM 0-255
+//   ACTUATOR_EXTEND | ACTUATOR_RETRACT | ACTUATOR_STOP
+//   PUMP_ON | PUMP_OFF | PUMP_STOP
+// DRIVE, PUMP_ON and ACTUATOR_EXTEND/RETRACT stop by themselves after MANUAL_AUTO_STOP_MS.
+
+void sendLoRa(const String &message) {
+  LoRa.beginPacket();
+  LoRa.print(message);
+  LoRa.endPacket();
+  LoRa.receive();
+}
+
+unsigned long autoStopDeadline() {
+  unsigned long at = millis() + MANUAL_AUTO_STOP_MS;
+  return at == 0 ? 1 : at;  // 0 means "no deadline"
+}
+
+bool deadlinePassed(unsigned long at) {
+  return at != 0 && (long)(millis() - at) >= 0;
+}
+
+int driveOptionFor(const String &direction) {
+  if (direction == "FORWARD") return 1;
+  if (direction == "REVERSE") return 2;
+  if (direction == "LEFT") return 3;
+  if (direction == "RIGHT") return 4;
+  return 0;
+}
+
+bool isWholeNumber(const String &s) {
+  if (s.length() == 0 || s.length() > 3) return false;
+  for (unsigned int i = 0; i < s.length(); i++) {
+    if (!isDigit(s.charAt(i))) return false;
+  }
+  return true;
+}
+
+void sendToNano(const char *command) {
+  Serial2.println(command);
+  Serial.print("[LoRa CMD] -> Nano: ");
+  Serial.println(command);
+}
+
+// Applies one manual command. Returns false if it is not recognised.
+bool applyLoRaCommand(String cmd) {
+  cmd.toUpperCase();
+
+  if (cmd == "STOP_ALL" || cmd == "STOP") {
+    stopMotors();
+    sendToNano("STOP_ALL");
+    pumpStopAt = 0;
+    actuatorStopAt = 0;
+    return true;
+  }
+  if (cmd == "MOTOR_STOP") {
+    stopMotors();
+    return true;
+  }
+  if (cmd == "PUMP_ON") {
+    sendToNano("PUMP_ON");
+    pumpStopAt = autoStopDeadline();
+    return true;
+  }
+  if (cmd == "PUMP_OFF" || cmd == "PUMP_STOP") {
+    sendToNano("PUMP_OFF");
+    pumpStopAt = 0;
+    return true;
+  }
+  if (cmd == "ACTUATOR_EXTEND" || cmd == "ACTUATOR_RETRACT") {
+    sendToNano(cmd == "ACTUATOR_EXTEND" ? "ACTUATOR_EXTEND" : "ACTUATOR_RETRACT");
+    actuatorStopAt = autoStopDeadline();
+    return true;
+  }
+  if (cmd == "ACTUATOR_STOP") {
+    sendToNano("ACTUATOR_STOP");
+    actuatorStopAt = 0;
+    return true;
+  }
+  if (cmd.startsWith("DRIVE:")) {
+    int second = cmd.indexOf(':', 6);
+    if (second < 0) return false;
+    int option = driveOptionFor(cmd.substring(6, second));
+    String pwmText = cmd.substring(second + 1);
+    if (option == 0 || !isWholeNumber(pwmText)) return false;
+    int pwm = pwmText.toInt();
+    if (pwm < 0 || pwm > 255) return false;
+    driveMotors(option, pwm);
+    motorStopAt = autoStopDeadline();
+    Serial.print("[LoRa CMD] Motion: ");
+    Serial.print(currentMotionState);
+    Serial.print(" | PWM: ");
+    Serial.println(pwm);
+    return true;
+  }
+  return false;
+}
+
+void handleLoRaPacket(const String &packet) {
+  if (packet.length() == 0) return;
+  // The bridge ACKs every packet it receives, including our own ACK/NACK replies: ignore those.
+  if (packet.startsWith("ACK:") || packet.startsWith("NACK:")) return;
+  // The bridge polls every 3 s. The status reply format is not agreed yet
+  // (OPEN_ITEMS #36-#39), so the poll is not answered here.
+  if (packet == "GET_ROBOT_STATUS") return;
+
+  if (applyLoRaCommand(packet)) {
+    sendLoRa("ACK:" + packet);
+  } else {
+    Serial.println("[LoRa CMD] Unknown command; replying NACK.");
+    sendLoRa("NACK:" + packet);
+  }
+}
+
+void checkAutoStop() {
+  if (deadlinePassed(motorStopAt)) {
+    stopMotors();
+    Serial.println("[AUTO-STOP] Motors stopped (no new drive command).");
+  }
+  if (deadlinePassed(pumpStopAt)) {
+    pumpStopAt = 0;
+    sendToNano("PUMP_OFF");
+    Serial.println("[AUTO-STOP] Pump stopped.");
+  }
+  if (deadlinePassed(actuatorStopAt)) {
+    actuatorStopAt = 0;
+    sendToNano("ACTUATOR_STOP");
+    Serial.println("[AUTO-STOP] Actuator stopped.");
+  }
 }
 
 void printStatusReport() {

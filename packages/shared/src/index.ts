@@ -17,5 +17,7 @@ export * from './protocol/cobs';
 export * from './protocol/lora';
 export * from './protocol/serial';
 export * from './protocol/manualCommands';
+// D57: manual control over the Sprint 1 firmware's text commands (separate from the disabled D21 binary contract).
+export * from './protocol/manualControl';
 export * from './protocol/commandTracker';
 export * from './protocol/radioScheduler';

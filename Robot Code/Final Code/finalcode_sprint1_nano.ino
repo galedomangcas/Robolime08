@@ -83,12 +83,18 @@ void executeCommand(String cmd) {
     digitalWrite(ACTUATOR_IN2, HIGH);
     Serial.println("[ACTION] Linear Actuator Retracting...");
   } 
+  else if (cmd == "ACTUATOR_STOP") {
+    // Sent by the ESP32 when a manual actuator command times out (D57).
+    digitalWrite(ACTUATOR_IN1, LOW);
+    digitalWrite(ACTUATOR_IN2, LOW);
+    Serial.println("[ACTION] Linear Actuator Stopped.");
+  }
   else if (cmd == "PUMP_ON") {
     digitalWrite(PUMP_IN3, HIGH);
     digitalWrite(PUMP_IN4, LOW);
     Serial.println("[ACTION] Diaphragm Pump ON.");
   } 
-  else if (cmd == "PUMP_OFF") {
+  else if (cmd == "PUMP_OFF" || cmd == "PUMP_STOP") {
     digitalWrite(PUMP_IN3, LOW);
     digitalWrite(PUMP_IN4, LOW);
     Serial.println("[ACTION] Diaphragm Pump OFF.");

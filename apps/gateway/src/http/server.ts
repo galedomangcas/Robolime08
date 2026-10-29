@@ -21,8 +21,8 @@ import { serveStatic, type StaticSite } from './static';
  *
  * All routing, validation, pairing and robot-scoped authorization stay in
  * `createLocalApi`; this layer only turns HTTP into `ApiRequest` objects and
- * `ApiResponse` objects into JSON. It adds no routes — in particular no
- * robot-control routes. Outside /api/ it serves only the optional, opt-in
+ * `ApiResponse` objects into JSON. It adds no routes of its own (the
+ * manual-control routes, D57, live in the API). Outside /api/ it serves only the optional, opt-in
  * static web export (`staticSite`, decision D33); paths under /api/ always
  * go to the API, never to static files.
  *
@@ -245,7 +245,7 @@ export function createRequestListener(options: GatewayHttpServerOptions, allowed
       }
     }
 
-    const response = options.api.handle({
+    const apiRequest = {
       method,
       // The handler routes on the path and strips any query itself; pass the
       // parsed pathname so absolute-form request targets are normalised.
@@ -255,7 +255,9 @@ export function createRequestListener(options: GatewayHttpServerOptions, allowed
       // The socket's peer address only. Forwarded headers (X-Forwarded-For,
       // Forwarded) are never trusted: no proxy sits in front of this server.
       clientAddress: req.socket.remoteAddress ?? null,
-    });
+    };
+    // handleAsync adds the manual-control routes (D57); test doubles may provide only handle.
+    const response = options.api.handleAsync ? await options.api.handleAsync(apiRequest) : options.api.handle(apiRequest);
     send(res, response, response.retryAfterSeconds === undefined ? {} : { 'Retry-After': String(response.retryAfterSeconds) });
     return response.status;
   }

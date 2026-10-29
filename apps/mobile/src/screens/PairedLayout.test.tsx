@@ -76,6 +76,8 @@ function fakeClient() {
     selectField: async (_t: string, fieldId: string) => ({ ok: true, data: { selection: { fieldId, confirmedAt: '2026-03-01T12:00:00.000Z' } } }),
     exportRuns: async () => ({ ok: true, data: { runs: [] } }),
     exportCsv: async () => ({ ok: false, failure: { kind: 'invalid-response' } }),
+    manualStatus: async () => ({ ok: false, failure: { kind: 'unreachable' } }),
+    manualCommand: async () => ({ ok: false, failure: { kind: 'unreachable' } }),
   };
   return { client, calls };
 }
@@ -159,9 +161,9 @@ describe('paired layout (D50, D54)', () => {
     expect(screen.getAllByText('—')).toHaveLength(5);
   });
 
-  it('shows only the Field and Results tabs in the demo (D56)', async () => {
+  it('shows the Field, Results and Manual control tabs on the field gateway (D56, D57)', async () => {
     await renderPaired();
-    expect(screen.getAllByRole('tab').map((t) => t.props.accessibilityLabel)).toEqual(['Field', 'Results']);
+    expect(screen.getAllByRole('tab').map((t) => t.props.accessibilityLabel)).toEqual(['Field', 'Results', 'Manual control']);
     expect(screen.queryByRole('tab', { name: 'Exports' })).toBeNull();
   });
 
@@ -183,7 +185,7 @@ describe('paired layout (D50, D54)', () => {
   it('uses the side rail, a cell readings table and the map at laptop width', async () => {
     setWindow(1280, 900);
     await renderPaired();
-    expect(screen.getAllByRole('tab').map((t) => t.props.accessibilityLabel)).toEqual(['Field', 'Results']);
+    expect(screen.getAllByRole('tab').map((t) => t.props.accessibilityLabel)).toEqual(['Field', 'Results', 'Manual control']);
     expect(await screen.findByText('Cell readings')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'C4 details' })).toBeTruthy();
     expect(screen.getByText('1 of 1 needed lime')).toBeTruthy();

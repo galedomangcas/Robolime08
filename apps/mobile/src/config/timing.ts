@@ -11,5 +11,8 @@ export const REQUEST_TIMEOUT_MS = 10_000;
 /** Wait this long after one status request FINISHES before starting the next (never overlapping). */
 export const STATUS_POLL_INTERVAL_MS = 10_000;
 
+/** Manual control tab (D57): refresh the bridge connection and log this often while the tab is open. Laptop-local request only. */
+export const MANUAL_STATUS_POLL_MS = 2_000;
+
 /** Re-render the "x s ago" age labels this often. Local only: no network request. */
 export const AGE_REFRESH_MS = 1_000;

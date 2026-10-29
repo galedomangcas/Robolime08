@@ -1,8 +1,9 @@
 /**
  * Local gateway HTTP API, version 1 — typed contract shared by the app and the
- * laptop gateway. This API is READ-ONLY with respect to the robot: it exposes
- * no start/stop, dosing, navigation, or settings downlink. The only writes are
- * pairing (creates a local session) and recording a field-selection intent.
+ * laptop gateway. Apart from manual control (D57, below), this API is
+ * READ-ONLY with respect to the robot: it exposes no run start/stop, dosing
+ * run, navigation, or settings downlink. The other writes are pairing (creates
+ * a local session) and recording a field-selection intent.
  *
  * Every route except POST pairing requires `Authorization: Bearer <token>`
  * and only returns data for the robot claimed by that session.
@@ -12,6 +13,7 @@ import type { CellReading } from '../domain/reading';
 import type { CropRecommendation } from '../domain/recommendation';
 import type { RobotStatus } from '../domain/robot';
 import type { IsoDateTime } from '../domain/time';
+import type { ManualControlCommand } from '../protocol/manualControl';
 
 export const API_V1_BASE_PATH = '/api/v1';
 
@@ -33,7 +35,53 @@ export const API_V1_ROUTES = {
    * it only READS (the transport passes no query string); nothing is written.
    */
   exportCsv: `${API_V1_BASE_PATH}/exports/csv`,
+  /** Manual control (D57): bridge connection and recent commands. Field gateway only, loopback only. */
+  manualStatus: `${API_V1_BASE_PATH}/manual/status`,
+  /** Manual control (D57): POST {@link ManualCommandRequest}; answers once the robot ACKs or the bridge gives up. */
+  manualCommands: `${API_V1_BASE_PATH}/manual/commands`,
 } as const;
+
+export interface ManualCommandRequest {
+  command: ManualControlCommand;
+}
+
+/**
+ * - `acknowledged`: the robot replied `ACK:<line>`.
+ * - `rejected`: the robot replied `NACK:<line>` (it did not recognise the command).
+ * - `no-ack`: the bridge retried and got no ACK; the robot may or may not have acted.
+ * - `superseded`: a newer command was sent before this one was answered.
+ */
+export type ManualCommandOutcome = 'acknowledged' | 'rejected' | 'no-ack' | 'superseded';
+
+export interface ManualCommandResult {
+  command: ManualControlCommand;
+  /** Text line sent to the bridge. */
+  line: string;
+  outcome: ManualCommandOutcome;
+  /** Gateway clock. */
+  sentAt: IsoDateTime;
+  finishedAt: IsoDateTime;
+}
+
+export type ManualCommandResponse = ManualCommandResult;
+
+export type ManualBridgeState = 'not-configured' | 'connecting' | 'connected' | 'disconnected';
+
+export interface ManualStatusResponse {
+  bridge: {
+    state: ManualBridgeState;
+    /** Serial port name (e.g. COM5, /dev/ttyUSB0); null when not configured. */
+    port: string | null;
+    /** Why the bridge is not connected, in plain English; null when connected. */
+    detail: string | null;
+  };
+  /** Robot-enforced auto-stop for every manual output, in milliseconds. */
+  autoStopMs: number;
+  /** Most recent first. In memory on the gateway: cleared when it restarts. */
+  recentCommands: ManualCommandResult[];
+  /** Most recent last: lines printed by the bridge over USB serial (gateway clock). */
+  bridgeLog: { at: IsoDateTime; line: string }[];
+}
 
 export interface ExportCsvRequest {
   kind: ExportKind;
@@ -105,6 +153,8 @@ export type ApiErrorCode =
   | 'PAYLOAD_TOO_LARGE'
   /** POST body is not declared as `application/json` (HTTP transport). */
   | 'UNSUPPORTED_MEDIA_TYPE'
+  /** Manual control (D57): no LoRa bridge is configured or connected over USB serial. */
+  | 'MANUAL_BRIDGE_UNAVAILABLE'
   /** Unexpected gateway failure; details are logged on the gateway only, never returned. */
   | 'INTERNAL_ERROR';
 

@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@robolime/shared": "0.1.0",
+    "serialport": "^13.0.0",
     "tsx": "^4.23.15"
   },
   "devDependencies": {

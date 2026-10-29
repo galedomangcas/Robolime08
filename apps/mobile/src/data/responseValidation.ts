@@ -2,6 +2,7 @@ import {
   ERROR_FLAG_BITS,
   ROBOT_COMPONENTS,
   ROBOT_STATE_BY_CODE,
+  parseManualControlCommand,
   type CellReading,
   type ComponentCheck,
   type CropRecommendation,
@@ -10,6 +11,10 @@ import {
   type ExportRunsResponse,
   type FieldResponse,
   type FieldSelectionResponse,
+  type ManualBridgeState,
+  type ManualCommandOutcome,
+  type ManualCommandResult,
+  type ManualStatusResponse,
   type PairingResponse,
   type RobotStatus,
   type RobotStatusResponse,
@@ -296,5 +301,25 @@ export function isExportCsvResponse(v: unknown): v is ExportCsvResponse {
   return (
     (pc === null || (isObject(pc) && ['paired', 'missing_verification', 'missing_dosing', 'ambiguous_multiple_readings'].every((k) => isFiniteNumber(pc[k])))) &&
     (d === null || (isObject(d) && isNullableNumber(d.completenessNumerator) && isNullableNumber(d.completenessDenominator) && isString(d.completenessNote) && isString(d.firstAttemptNote)))
+  );
+}
+
+const MANUAL_OUTCOMES: ReadonlySet<unknown> = new Set(['acknowledged', 'rejected', 'no-ack', 'superseded'] satisfies ManualCommandOutcome[]);
+const BRIDGE_STATES: ReadonlySet<unknown> = new Set(['not-configured', 'connecting', 'connected', 'disconnected'] satisfies ManualBridgeState[]);
+
+export function isManualCommandResult(v: unknown): v is ManualCommandResult {
+  return (
+    isObject(v) && parseManualControlCommand(v.command) !== null && isString(v.line) && MANUAL_OUTCOMES.has(v.outcome) &&
+    isIsoDateTime(v.sentAt) && isIsoDateTime(v.finishedAt)
+  );
+}
+
+export function isManualStatusResponse(v: unknown): v is ManualStatusResponse {
+  if (!isObject(v) || !isObject(v.bridge) || !isFiniteNumber(v.autoStopMs)) return false;
+  const b = v.bridge;
+  return (
+    BRIDGE_STATES.has(b.state) && (b.port === null || isString(b.port)) && (b.detail === null || isString(b.detail)) &&
+    Array.isArray(v.recentCommands) && v.recentCommands.every(isManualCommandResult) &&
+    Array.isArray(v.bridgeLog) && v.bridgeLog.every((e) => isObject(e) && isIsoDateTime(e.at) && isString(e.line))
   );
 }

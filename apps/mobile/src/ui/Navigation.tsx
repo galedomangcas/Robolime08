@@ -8,24 +8,34 @@ import { LogoTile } from './primitives';
  * Sections of the paired view (D50). The demo shows Field and Results only (D56): the
  * Exports tab is hidden. Its screen and the gateway export routes are kept, and the CSVs
  * remain available on the field laptop with `npm run export:csv`.
+ * Manual control (D57) is added only for the field gateway on this laptop.
  */
-export type Section = 'field' | 'results';
+export type Section = 'field' | 'results' | 'manual';
 
-export const SECTIONS: readonly { key: Section; label: string; icon: IconName }[] = [
+export interface SectionItem {
+  key: Section;
+  label: string;
+  icon: IconName;
+}
+
+export const SECTIONS: readonly SectionItem[] = [
   { key: 'field', label: 'Field', icon: 'grid' },
   { key: 'results', label: 'Results', icon: 'leaf' },
 ];
 
+export const MANUAL_SECTION: SectionItem = { key: 'manual', label: 'Manual control', icon: 'signal' };
+
 interface NavProps {
   current: Section;
   onSelect: (section: Section) => void;
+  sections?: readonly SectionItem[];
 }
 
 /** Phone and narrow web: tab bar at the bottom of the screen. */
-export function BottomTabs({ current, onSelect }: NavProps) {
+export function BottomTabs({ current, onSelect, sections = SECTIONS }: NavProps) {
   return (
     <View style={styles.bottom} accessibilityRole="tablist">
-      {SECTIONS.map((s) => {
+      {sections.map((s) => {
         const selected = s.key === current;
         const color = selected ? colors.brand : colors.mutedText;
         return (
@@ -47,12 +57,12 @@ export function BottomTabs({ current, onSelect }: NavProps) {
 }
 
 /** Laptop width: dark side rail with the logo and section icons (web mockup). */
-export function SideNav({ current, onSelect }: NavProps) {
+export function SideNav({ current, onSelect, sections = SECTIONS }: NavProps) {
   return (
     <View style={styles.side} accessibilityRole="tablist">
       <LogoTile size={46} />
       <View style={styles.sideItems}>
-        {SECTIONS.map((s) => {
+        {sections.map((s) => {
           const selected = s.key === current;
           return (
             <Pressable
@@ -82,5 +92,5 @@ const styles = StyleSheet.create({
   sideItems: { gap: 10, alignItems: 'center' },
   sideItem: { width: 72, minHeight: 64, borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: 4 },
   sideItemSelected: { backgroundColor: colors.inkRaised },
-  sideLabel: { fontSize: 12, fontWeight: '600', color: colors.onDarkMuted },
+  sideLabel: { fontSize: 12, fontWeight: '600', color: colors.onDarkMuted, textAlign: 'center' },
 });

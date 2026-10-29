@@ -8,10 +8,11 @@ import type { StoredSession } from '../data/sessionStore';
 import { startPolling, type Timers } from '../data/statusPoller';
 import { buildStatusView, type Connection, type StatusSnapshot } from '../data/statusView';
 import { WIDE_BREAKPOINT, colors } from '../theme';
-import { BottomTabs, SideNav, type Section } from '../ui/Navigation';
+import { BottomTabs, MANUAL_SECTION, SECTIONS, SideNav, type Section } from '../ui/Navigation';
 import { Card, InfoBox, SecondaryButton, StatusPill, SyntheticBadge, textStyles } from '../ui/primitives';
 import { StatusStrip } from '../ui/StatusStrip';
 import { FieldOverview } from './FieldOverview';
+import { ManualControlScreen } from './ManualControlScreen';
 import { ResultsScreen } from './ResultsScreen';
 
 interface StatusScreenProps {
@@ -78,6 +79,8 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
 
   const view = buildStatusView({ connection, snapshot, now: currentTime, sourceName: dataSource.sourceName });
   const online = dataSource.kind === 'cloud';
+  const manualControl = dataSource.manualControl;
+  const sections = manualControl === null ? SECTIONS : [...SECTIONS, MANUAL_SECTION];
   const pillTone = connection.kind === 'connected' ? 'positive' : connection.kind === 'unavailable' ? 'negative' : 'neutral';
 
   const content = (
@@ -98,6 +101,9 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
       <StatusStrip view={view} wide={wide} />
 
       {section === 'results' && <ResultsScreen dataSource={dataSource} token={session.token} onSessionInvalid={onSessionInvalid} />}
+      {section === 'manual' && manualControl !== null && (
+        <ManualControlScreen control={manualControl} token={session.token} timers={timers} onSessionInvalid={onSessionInvalid} />
+      )}
       {section === 'field' && (
         <View style={styles.sectionBody}>
           <FieldOverview
@@ -153,7 +159,7 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
   if (wide) {
     return (
       <View style={styles.wideRoot}>
-        <SideNav current={section} onSelect={setSection} />
+        <SideNav current={section} onSelect={setSection} sections={sections} />
         {content}
       </View>
     );
@@ -161,7 +167,7 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
   return (
     <View style={styles.root}>
       {content}
-      <BottomTabs current={section} onSelect={setSection} />
+      <BottomTabs current={section} onSelect={setSection} sections={sections} />
     </View>
   );
 }

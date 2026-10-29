@@ -122,10 +122,10 @@ describe('gateway client', () => {
     });
   });
 
-  it('is observe-only: only pairing, the field intent and the export READ are POSTs, and no route can command the robot', async () => {
+  it('only pairing, the field intent, the export READ and manual control (D57) are POSTs; manual control is the only robot command route', async () => {
     const { fetch, calls } = fakeFetch({ status: 200, body: {} });
     const client = createGatewayClient({ baseUrl: '', fetch });
-    expect(Object.keys(client).sort()).toEqual(['exportCsv', 'exportRuns', 'field', 'pair', 'robotStatus', 'runReadings', 'runRecommendation', 'runs', 'selectField', 'session']);
+    expect(Object.keys(client).sort()).toEqual(['exportCsv', 'exportRuns', 'field', 'manualCommand', 'manualStatus', 'pair', 'robotStatus', 'runReadings', 'runRecommendation', 'runs', 'selectField', 'session']);
     await client.pair('ABCD-1234');
     await client.session('t');
     await client.robotStatus('t');
@@ -143,6 +143,12 @@ describe('gateway client', () => {
     // D54: recording the field choice (intent only) and building an export (read-only) are the only other POSTs.
     expect(rest.slice(7).map((c) => [c.method, c.url])).toEqual([['POST', API_V1_ROUTES.fieldSelections], ['POST', API_V1_ROUTES.exportCsv]]);
     expect(calls.map((c) => c.url).join(' ')).not.toMatch(/command|control|dose|dosing|motor|pump|actuator|navigate|start|stop/i);
+    await client.manualStatus('t');
+    await client.manualCommand('t', { type: 'STOP_ALL' });
+    expect(calls.slice(-2).map((c) => [c.method, c.url, c.body])).toEqual([
+      ['GET', API_V1_ROUTES.manualStatus, undefined],
+      ['POST', API_V1_ROUTES.manualCommands, JSON.stringify({ command: { type: 'STOP_ALL' } })],
+    ]);
   });
 
   it('reports a readings or recommendation answer for a different run as invalid-response', async () => {

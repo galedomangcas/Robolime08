@@ -1737,3 +1737,58 @@ removed from the phone tab bar and the laptop side rail.
 - **Manuscript/CLAUDE.md mismatch:** CLAUDE.md §9 asks for an export area for
   the research team. In the app UI it is hidden for the demo; the command-line
   export still meets the requirement.
+## D57 — Manual control of RoboLime over LoRa (observe-only lifted for manual control)
+
+**Status: DECIDED (project owner, 2026-10-29).** The owner chose "approve and
+build it" and a 5-second auto-stop. This entry is also the explicitly approved
+firmware revision that D45 requires for the files listed below.
+
+- **What it is:** a "Manual control" tab (screen title "Manual control of
+  RoboLime") in the **field build on the laptop only**. It sends drive,
+  pump and actuator commands: app → loopback API → gateway → USB serial →
+  LoRa bridge → LoRa → robot ESP32 (→ Nano for pump/actuator).
+- **Supersedes, for manual control only:** the observe-only rule and "no
+  app-to-robot downlink" in `CLAUDE.md` §3, and D21's "disabled" status for a
+  manual-control path. Dosing runs, dose calculation, navigation and field
+  decisions stay on the robot. The cloud/Vercel build has no command path
+  (`manualControl: null`).
+- **Wire format:** the Sprint 1 firmware's own text commands, one line per
+  command over USB serial (`packages/shared/src/protocol/manualControl.ts`):
+  `STOP_ALL`, `DRIVE:<FORWARD|REVERSE|LEFT|RIGHT>:<PWM 0-255>`,
+  `ACTUATOR_EXTEND|RETRACT`, `PUMP_ON|OFF`. The robot answers `ACK:<cmd>` or
+  `NACK:<cmd>`; the bridge retries 3 times at 1 s. This is a narrow
+  manual-control channel: it does **not** adopt D37 for telemetry and does not
+  change D22, the unsigned LoRa codec, `RADIO_SCHEDULE=null` or the D21 binary
+  contract (`MANUAL_COMMANDS_APPROVED` stays `false` for that contract).
+- **Safety:**
+  - every output started over LoRa (drive, pump, actuator) stops by itself
+    after `MANUAL_AUTO_STOP_MS = 5000` on the robot, even if no STOP arrives
+    (owner-chosen; hardware sign-off pending, OPEN_ITEMS #22)
+  - STOP EVERYTHING is always available while the bridge is connected and
+    replaces any pending command
+  - loopback only: `--serial-port` is refused with `--lan` (D40)
+  - same paired session as every other route
+  - the app reports only what the bridge saw (ACK, NACK, no reply), never
+    that the robot moved
+- **Gateway:** `npm run serve -- --db <file> --serial-port COM5` (or
+  `GATEWAY_SERIAL_PORT`; `GATEWAY_SERIAL_BAUD`, default 115200). New dependency
+  `serialport` (laptop and Raspberry Pi prebuilds). Routes
+  `GET /api/v1/manual/status`, `POST /api/v1/manual/commands`. Command
+  history and the bridge log are in memory only (cleared on restart); nothing
+  is written to SQLite.
+- **Firmware revision (approved here):**
+  - `finalcode_sprint1_esp.ino`: handles LoRa commands, sends ACK/NACK,
+    auto-stops after 5 s, answers the Nano's `NANO_READY` with `ESP32_ACK`
+    (#43), LoRa frequency 915E6 → **433E6** to match the bridge and the
+    documented Ra-02 modules (#41)
+  - `finalcode_sprint1_nano.ino`: adds `ACTUATOR_STOP` and the `PUMP_STOP` alias
+  - `finalcode_sprint1_gateway.ino`: the bridge, based on the
+    `SPRINT_1_Gateway.ino` test sketch, with NACK handling; 433E6
+  - the USB serial bench menu on the robot is unchanged and has no auto-stop
+- **Manual pump use is not part of a dosing run** and is not recorded as
+  dispensed lime.
+- **Verified:** gateway unit tests (fake serial bridge), app screen tests,
+  typecheck. **Not verified:** the sketches were not compiled (no
+  `arduino-cli` on this machine) and nothing was run on real hardware.
+- **Manuscript mismatch:** the manuscript and `CLAUDE.md` describe the apps
+  as observe-only. Both need to mention laptop-only manual control (#44).

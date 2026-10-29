@@ -6,8 +6,11 @@
  * --lan or GATEWAY_LAN_MODE=on AND an RFC 1918 IPv4 address assigned to this
  * computer; otherwise it refuses to start (no fallback). The exported web app
  * is served at / only with --web-dir or GATEWAY_WEB_DIR (decision D33).
- * The serial bridge and cloud sync are NOT started by this command. Firewall
- * settings are never changed. Stop with Ctrl+C.
+ * The telemetry serial bridge and cloud sync are NOT started by this command.
+ * Firewall settings are never changed. Stop with Ctrl+C.
+ * MANUAL CONTROL (D57): --serial-port <COM5 | /dev/ttyUSB0> (or GATEWAY_SERIAL_PORT)
+ * connects the LoRa bridge so the app's "Manual control" tab can command the
+ * robot. Loopback only; refused with --lan.
  * DEMO ONLY (D47): --demo-pairing (or GATEWAY_DEMO_PAIRING=on) accepts the fixed
  * demo pairing code; it requires loopback binding and a demo database, and is
  * never for field use.
@@ -24,6 +27,7 @@ const args = parseCli({
   'web-dir': { type: 'string' },
   lan: { type: 'boolean' },
   'demo-pairing': { type: 'boolean' },
+  'serial-port': { type: 'string' },
 });
 const dbPath = resolveDbPath(args.db);
 
@@ -37,6 +41,7 @@ try {
     webDir: args['web-dir'],
     lan: args.lan, // undefined when the flag is absent: GATEWAY_LAN_MODE decides
     demoPairing: args['demo-pairing'], // undefined when absent: GATEWAY_DEMO_PAIRING decides (default off)
+    serialPort: args['serial-port'], // undefined when absent: GATEWAY_SERIAL_PORT decides (default off)
     onRequest: ({ method, path, status, durationMs }) =>
       process.stdout.write(`${new Date().toISOString()} ${method} ${path} ${status} ${durationMs}ms\n`),
     onError: ({ errorName, method, path }) =>
@@ -72,15 +77,21 @@ const banner =
         running.servesWebApp
           ? `Web app: open ${running.url}/ in a browser on this computer.`
           : 'Web app not served (use --web-dir or GATEWAY_WEB_DIR to enable it).',
-        'LAN access (--lan, decision D36), the serial bridge and cloud sync are not enabled by this command.',
+        'LAN access (--lan, decision D36), the telemetry serial bridge and cloud sync are not enabled by this command.',
       ];
+const manualNotice = running.serialPort
+  ? [
+      `MANUAL CONTROL ON (D57): LoRa bridge on ${running.serialPort}. The app can drive the robot, pump and`,
+      'actuator. Keep people clear of the robot; every manual output stops by itself after 5 s.',
+    ]
+  : ['Manual control off (start with --serial-port <port> to connect the LoRa bridge).'];
 const demoWarning = running.demoPairing
   ? [
       'DEMO PAIRING MODE (D47): the fixed, publicly known demo pairing code is accepted on this',
       'synthetic demo database. Never use this mode, or that code, in a field deployment.',
     ]
   : [];
-process.stdout.write([...banner, ...demoWarning, 'Press Ctrl+C to stop.', ''].join('\n'));
+process.stdout.write([...banner, ...manualNotice, ...demoWarning, 'Press Ctrl+C to stop.', ''].join('\n'));
 
 let stopping = false;
 function shutdown(signal: string): void {

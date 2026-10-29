@@ -115,6 +115,8 @@ function fakeClient() {
     selectField: async (_t: string, fieldId: string) => ({ ok: true, data: { selection: { fieldId, confirmedAt: '2026-03-01T12:00:00.000Z' } } }),
     exportRuns: async () => ({ ok: true, data: { runs: [] } }),
     exportCsv: async () => ({ ok: false, failure: { kind: 'invalid-response' } }),
+    manualStatus: async () => ({ ok: false, failure: { kind: 'unreachable' } }),
+    manualCommand: async () => ({ ok: false, failure: { kind: 'unreachable' } }),
   };
   return { client, calls, state };
 }

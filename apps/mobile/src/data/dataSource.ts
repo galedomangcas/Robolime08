@@ -4,6 +4,9 @@ import type {
   ExportRunsResponse,
   FieldResponse,
   FieldSelectionResponse,
+  ManualCommandResponse,
+  ManualControlCommand,
+  ManualStatusResponse,
   RobotStatusResponse,
   RunReadingsResponse,
   RunRecommendationResponse,
@@ -48,6 +51,11 @@ export interface FieldDataSource {
     runs(token: string): Promise<GatewayResult<ExportRunsResponse>>;
     csv(token: string, request: ExportCsvRequest): Promise<GatewayResult<ExportCsvResponse>>;
   };
+  /** Manual control over LoRa (D57); only the field gateway on this laptop can reach the robot. */
+  manualControl: null | {
+    status(token: string): Promise<GatewayResult<ManualStatusResponse>>;
+    send(token: string, command: ManualControlCommand): Promise<GatewayResult<ManualCommandResponse>>;
+  };
 }
 
 /** Field mode: the laptop gateway's loopback API and its SQLite store. Works with no internet. */
@@ -63,6 +71,7 @@ export function createLocalGatewayDataSource(client: GatewayClient): FieldDataSo
     field: (token) => client.field(token),
     selectField: (token, fieldId) => client.selectField(token, fieldId),
     exports: { runs: (token) => client.exportRuns(token), csv: (token, request) => client.exportCsv(token, request) },
+    manualControl: { status: (token) => client.manualStatus(token), send: (token, command) => client.manualCommand(token, command) },
   };
 }
 
@@ -113,5 +122,7 @@ export function createCloudDataSource(reader: CloudReader, robotId: string): Fie
     // No cloud table holds selections (they are local-only, D52): the caller keeps the choice in this browser.
     selectField: async (_token, fieldId) => ({ ok: true, data: { selection: { fieldId, confirmedAt: new Date().toISOString() } } }),
     exports: null,
+    // The cloud mirror never reaches the robot.
+    manualControl: null,
   };
 }

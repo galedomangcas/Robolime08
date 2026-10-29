@@ -6,6 +6,9 @@ import {
   type ExportRunsResponse,
   type FieldResponse,
   type FieldSelectionResponse,
+  type ManualCommandResponse,
+  type ManualControlCommand,
+  type ManualStatusResponse,
   type PairingResponse,
   type RobotStatusResponse,
   type RunReadingsResponse,
@@ -20,6 +23,8 @@ import {
   isExportRunsResponse,
   isFieldResponse,
   isFieldSelectionResponse,
+  isManualCommandResult,
+  isManualStatusResponse,
   isPairingResponse,
   isReadingsForRun,
   isRecommendationForRun,
@@ -91,6 +96,10 @@ export interface GatewayClient {
   /** Research export area (D54): all runs, including verification runs. */
   exportRuns(token: string): Promise<GatewayResult<ExportRunsResponse>>;
   exportCsv(token: string, request: ExportCsvRequest): Promise<GatewayResult<ExportCsvResponse>>;
+  /** Manual control (D57): LoRa bridge connection and recent commands. */
+  manualStatus(token: string): Promise<GatewayResult<ManualStatusResponse>>;
+  /** Manual control (D57): answers once the robot ACKs or the bridge gives up. MANUAL_BRIDGE_UNAVAILABLE (503) when not connected. */
+  manualCommand(token: string, command: ManualControlCommand): Promise<GatewayResult<ManualCommandResponse>>;
 }
 
 function errorCodeOf(body: unknown): ApiErrorCode | null {
@@ -184,5 +193,8 @@ export function createGatewayClient(options: GatewayClientOptions): GatewayClien
     selectField: (token, fieldId) => call<FieldSelectionResponse>('POST', API_V1_ROUTES.fieldSelections, token, isFieldSelectionResponse, { fieldId }),
     exportRuns: (token) => call<ExportRunsResponse>('GET', API_V1_ROUTES.exportRuns, token, isExportRunsResponse),
     exportCsv: (token, request) => call<ExportCsvResponse>('POST', API_V1_ROUTES.exportCsv, token, isExportCsvResponse, request),
+    manualStatus: (token) => call<ManualStatusResponse>('GET', API_V1_ROUTES.manualStatus, token, isManualStatusResponse),
+    manualCommand: (token, command) =>
+      call<ManualCommandResponse>('POST', API_V1_ROUTES.manualCommands, token, isManualCommandResult, { command }),
   };
 }

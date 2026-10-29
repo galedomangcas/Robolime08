@@ -8,6 +8,8 @@ import {
   type ExportRunsResponse,
   type FieldResponse,
   type FieldSelectionResponse,
+  type ManualCommandResponse,
+  type ManualStatusResponse,
   type PairingResponse,
   type RobotStatusResponse,
   type RobotSummary,
@@ -16,6 +18,9 @@ import {
   type RunsResponse,
   type RunSummary,
   type SessionResponse,
+  MANUAL_AUTO_STOP_MS,
+  MANUAL_CONTROL_APPROVED,
+  parseManualControlCommand,
 } from '@robolime/shared';
 import { randomUUID } from 'node:crypto';
 
@@ -28,14 +33,17 @@ import { getRun, listRunReadings } from '../store/readings';
 import { getRecommendationForRun } from '../store/recommendations';
 import { getActiveField, getRobot } from '../store/robots';
 import { getLatestStatus } from '../store/status';
+import type { ManualControlLink } from '../manual/manualControlLink';
 import { buildExportCsv, listExportRuns } from './exportRoutes';
 
 /**
- * Transport-independent handler for the local read-only API (contract:
- * packages/shared/src/api/v1.ts). Phase 4 wraps this in a LAN-bound HTTP
+ * Transport-independent handler for the local API (contract:
+ * packages/shared/src/api/v1.ts). Phase 4 wraps this in a loopback HTTP
  * server; the authorization boundary lives here so it is tested directly.
  *
- * There are deliberately no routes that command the robot.
+ * The only routes that command the robot are the manual-control routes (D57),
+ * served by `handleAsync` because they wait for the robot's ACK. They need the
+ * same paired session as every other route.
  */
 export interface ApiRequest {
   method: string;
@@ -62,6 +70,8 @@ export type ApiResponseBody =
   | RunRecommendationResponse
   | ExportRunsResponse
   | ExportCsvResponse
+  | ManualStatusResponse
+  | ManualCommandResponse
   | ApiErrorBody;
 
 export interface ApiResponse {
@@ -81,6 +91,15 @@ export interface LocalApiOptions {
    * layer additionally requires loopback binding.
    */
   demoPairing?: boolean;
+  /** Manual control (D57). Absent: the manual routes report the bridge as not configured. */
+  manualControl?: ManualControlLink | null;
+}
+
+export interface LocalApi {
+  /** Every route except manual control; synchronous. */
+  handle(req: ApiRequest): ApiResponse;
+  /** Manual-control routes (they wait for the bridge), then everything `handle` serves. */
+  handleAsync?(req: ApiRequest): Promise<ApiResponse>;
 }
 
 const ERROR_STATUS: Record<ApiErrorCode, number> = {
@@ -97,6 +116,7 @@ const ERROR_STATUS: Record<ApiErrorCode, number> = {
   METHOD_NOT_ALLOWED: 405,
   PAYLOAD_TOO_LARGE: 413,
   UNSUPPORTED_MEDIA_TYPE: 415,
+  MANUAL_BRIDGE_UNAVAILABLE: 503,
   INTERNAL_ERROR: 500,
 };
 
@@ -115,6 +135,8 @@ const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
   METHOD_NOT_ALLOWED: 'This operation is not available.',
   PAYLOAD_TOO_LARGE: 'The request is too large.',
   UNSUPPORTED_MEDIA_TYPE: 'Send the request body as JSON with Content-Type: application/json.',
+  MANUAL_BRIDGE_UNAVAILABLE:
+    'The LoRa bridge is not connected to this laptop. Plug in the bridge over USB and start the gateway with --serial-port.',
   INTERNAL_ERROR: 'The gateway could not complete this request. Try again; if it keeps failing, check the gateway laptop.',
 };
 
@@ -170,8 +192,9 @@ const RUN_SUMMARY_SQL = `
 
 const RUN_SUB_ROUTE = new RegExp(`^${API_V1_BASE_PATH}/runs/([^/]+)/(readings|recommendation)$`);
 
-export function createLocalApi(options: LocalApiOptions) {
+export function createLocalApi(options: LocalApiOptions): Required<LocalApi> {
   const { db } = options;
+  const manualControl = MANUAL_CONTROL_APPROVED ? (options.manualControl ?? null) : null;
   const clock = options.clock ?? systemClock;
   const ttlDays = options.sessionTtlDays ?? DEFAULT_SESSION_TTL_DAYS;
   const demoPairing = options.demoPairing === true;
@@ -303,19 +326,47 @@ export function createLocalApi(options: LocalApiOptions) {
     return fail('NOT_FOUND', 'Unknown API route.');
   }
 
+  async function handleManual(req: ApiRequest, path: string): Promise<ApiResponse> {
+    if (path === API_V1_ROUTES.manualStatus) {
+      if (req.method !== 'GET') return fail('METHOD_NOT_ALLOWED');
+      if (manualControl) return ok(manualControl.status());
+      return ok({
+        bridge: { state: 'not-configured', port: null, detail: 'Manual control is not enabled on this gateway.' },
+        autoStopMs: MANUAL_AUTO_STOP_MS,
+        recentCommands: [],
+        bridgeLog: [],
+      });
+    }
+    if (req.method !== 'POST') return fail('METHOD_NOT_ALLOWED');
+    const command = isRecord(req.body) ? parseManualControlCommand(req.body.command) : null;
+    if (command === null) {
+      return fail('BAD_REQUEST', 'Send {"command": {...}} with one valid manual-control command.');
+    }
+    if (!manualControl) return fail('MANUAL_BRIDGE_UNAVAILABLE');
+    const sent = await manualControl.send(command);
+    return sent.ok ? ok(sent.result) : fail('MANUAL_BRIDGE_UNAVAILABLE');
+  }
+
+  function handle(req: ApiRequest): ApiResponse {
+    const path = req.path.split('?')[0] ?? '';
+    if (path === API_V1_ROUTES.pairing) {
+      return handlePairing(req);
+    }
+    const session = validateSession(db, bearerToken(req.authorization), clock(), pairingPolicy);
+    if (!session.ok) {
+      return fail(session.error);
+    }
+    return handleAuthorized(req, session.robotId, session.expiresAt, session.sessionId);
+  }
+
   return {
-    handle(req: ApiRequest): ApiResponse {
+    handle,
+    async handleAsync(req: ApiRequest): Promise<ApiResponse> {
       const path = req.path.split('?')[0] ?? '';
-      if (path === API_V1_ROUTES.pairing) {
-        return handlePairing(req);
-      }
+      if (path !== API_V1_ROUTES.manualStatus && path !== API_V1_ROUTES.manualCommands) return handle(req);
       const session = validateSession(db, bearerToken(req.authorization), clock(), pairingPolicy);
-      if (!session.ok) {
-        return fail(session.error);
-      }
-      return handleAuthorized(req, session.robotId, session.expiresAt, session.sessionId);
+      if (!session.ok) return fail(session.error);
+      return handleManual(req, path);
     },
   };
 }
-
-export type LocalApi = ReturnType<typeof createLocalApi>;
