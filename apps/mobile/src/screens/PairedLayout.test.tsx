@@ -6,7 +6,9 @@ import { createMemorySessionStore, type StoredSession } from '../data/sessionSto
 import type { Timers } from '../data/statusPoller';
 import { colors } from '../theme';
 import { PH_TARGET, gaugeColorAt } from '../ui/primitives';
+import { createLocalGatewayDataSource } from '../data/dataSource';
 import { AppRoot } from './AppRoot';
+import { ExportsScreen } from './ExportsScreen';
 
 // Window size is controlled through the hook the screens use (Dimensions.set is unreliable under jest-expo).
 const mockWindow = { width: 750, height: 1334, scale: 1, fontScale: 1 };
@@ -157,14 +159,17 @@ describe('paired layout (D50, D54)', () => {
     expect(screen.getAllByText('—')).toHaveLength(5);
   });
 
-  it('builds research exports on the gateway and reports what it built', async () => {
+  it('shows only the Field and Results tabs in the demo (D56)', async () => {
+    await renderPaired();
+    expect(screen.getAllByRole('tab').map((t) => t.props.accessibilityLabel)).toEqual(['Field', 'Results']);
+    expect(screen.queryByRole('tab', { name: 'Exports' })).toBeNull();
+  });
+
+  it('keeps the hidden exports screen working: builds research exports on the gateway', async () => {
     const fake = fakeClient();
     fake.client.exportRuns = async () => ok({ runs: [{ id: 'run-1', sourceRunId: 'R-0001', runType: 'dosing', readingCount: 1, firstRobotRecordedAt: '2026-03-01T08:00:00.000Z', isSynthetic: true }] });
     fake.client.exportCsv = async (_t, req) => ok({ kind: req.kind, filename: `readings_R-0001.csv`, csv: 'a,b\n1,2\n', rows: 1, pairCounts: null, delivery: null });
-    const store = createMemorySessionStore();
-    store.save(SESSION);
-    await render(<AppRoot client={fake.client} store={store} now={() => NOW} timers={noTimers} />);
-    await act(async () => fireEvent.press(await screen.findByRole('tab', { name: 'Exports' })));
+    await render(<ExportsScreen dataSource={createLocalGatewayDataSource(fake.client)} token="t" onSessionInvalid={() => undefined} />);
     expect(await screen.findByText(/R-0001/)).toBeTruthy();
     const download = screen.getByLabelText('Download Readings per run');
     expect(download.props.accessibilityState).toMatchObject({ disabled: false });
@@ -178,7 +183,7 @@ describe('paired layout (D50, D54)', () => {
   it('uses the side rail, a cell readings table and the map at laptop width', async () => {
     setWindow(1280, 900);
     await renderPaired();
-    expect(screen.getAllByRole('tab').map((t) => t.props.accessibilityLabel)).toEqual(['Field', 'Results', 'Exports']);
+    expect(screen.getAllByRole('tab').map((t) => t.props.accessibilityLabel)).toEqual(['Field', 'Results']);
     expect(await screen.findByText('Cell readings')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'C4 details' })).toBeTruthy();
     expect(screen.getByText('1 of 1 needed lime')).toBeTruthy();

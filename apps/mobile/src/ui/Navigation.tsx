@@ -4,13 +4,16 @@ import { colors } from '../theme';
 import { Icon, type IconName } from './Icon';
 import { LogoTile } from './primitives';
 
-/** The three sections of the paired view, as in the mockups (D50). */
-export type Section = 'field' | 'results' | 'exports';
+/**
+ * Sections of the paired view (D50). The demo shows Field and Results only (D56): the
+ * Exports tab is hidden. Its screen and the gateway export routes are kept, and the CSVs
+ * remain available on the field laptop with `npm run export:csv`.
+ */
+export type Section = 'field' | 'results';
 
 export const SECTIONS: readonly { key: Section; label: string; icon: IconName }[] = [
   { key: 'field', label: 'Field', icon: 'grid' },
   { key: 'results', label: 'Results', icon: 'leaf' },
-  { key: 'exports', label: 'Exports', icon: 'download' },
 ];
 
 interface NavProps {

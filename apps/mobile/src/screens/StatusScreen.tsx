@@ -11,7 +11,6 @@ import { WIDE_BREAKPOINT, colors } from '../theme';
 import { BottomTabs, SideNav, type Section } from '../ui/Navigation';
 import { Card, InfoBox, SecondaryButton, StatusPill, SyntheticBadge, textStyles } from '../ui/primitives';
 import { StatusStrip } from '../ui/StatusStrip';
-import { ExportsScreen } from './ExportsScreen';
 import { FieldOverview } from './FieldOverview';
 import { ResultsScreen } from './ResultsScreen';
 
@@ -99,7 +98,6 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
       <StatusStrip view={view} wide={wide} />
 
       {section === 'results' && <ResultsScreen dataSource={dataSource} token={session.token} onSessionInvalid={onSessionInvalid} />}
-      {section === 'exports' && <ExportsScreen dataSource={dataSource} token={session.token} onSessionInvalid={onSessionInvalid} />}
       {section === 'field' && (
         <View style={styles.sectionBody}>
           <FieldOverview

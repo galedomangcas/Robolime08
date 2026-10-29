@@ -1725,3 +1725,15 @@ and reverses D33's "no cell progress". CLAUDE.md §4 still marks these
   robot's display name. The subtitle names only the data source ("Field
   gateway on this computer" / "Online · synchronised records"). The SYNTHETIC
   badge still appears for synthetic robots.
+## D56 — Demo shows only the Field and Results tabs
+
+**Status: DECIDED by the project owner (2026-10-29).** The Exports tab is
+removed from the phone tab bar and the laptop side rail.
+
+- **Kept, so it can be re-enabled by adding the tab back in
+  `apps/mobile/src/ui/Navigation.tsx`:** `ExportsScreen`, the gateway export
+  routes, and their tests.
+- **CSV exports remain available on the field laptop:** `npm run export:csv`.
+- **Manuscript/CLAUDE.md mismatch:** CLAUDE.md §9 asks for an export area for
+  the research team. In the app UI it is hidden for the demo; the command-line
+  export still meets the requirement.
