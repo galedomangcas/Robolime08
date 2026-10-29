@@ -26,7 +26,63 @@ export const API_V1_ROUTES = {
     `${API_V1_BASE_PATH}/runs/${encodeURIComponent(runId)}/readings`,
   runRecommendation: (runId: string) =>
     `${API_V1_BASE_PATH}/runs/${encodeURIComponent(runId)}/recommendation`,
+  /** Research exports (D54): every run, INCLUDING verification runs, for the export area only. */
+  exportRuns: `${API_V1_BASE_PATH}/exports/runs`,
+  /**
+   * One research CSV as JSON ({@link ExportCsvResponse}). POST {@link ExportCsvRequest}:
+   * it only READS (the transport passes no query string); nothing is written.
+   */
+  exportCsv: `${API_V1_BASE_PATH}/exports/csv`,
 } as const;
+
+export interface ExportCsvRequest {
+  kind: ExportKind;
+  /** `ExportRunSummary.id` of the run (the dosing run for `paired`). */
+  runId: string;
+  /** Required for `paired`: the verification run's id. */
+  verificationRunId?: string;
+}
+
+/** Research export area only (D54): verification runs appear here, never on farmer screens. */
+export interface ExportRunSummary {
+  id: string;
+  sourceRunId: string;
+  runType: 'dosing' | 'verification';
+  readingCount: number;
+  firstRobotRecordedAt: IsoDateTime | null;
+  isSynthetic: boolean;
+}
+
+export interface ExportRunsResponse {
+  runs: ExportRunSummary[];
+}
+
+export type ExportKind = 'readings' | 'paired' | 'delivery';
+
+/** Pair outcomes of the paired export (gateway `PairCounts`). */
+export interface ExportPairCounts {
+  paired: number;
+  missing_verification: number;
+  missing_dosing: number;
+  ambiguous_multiple_readings: number;
+}
+
+export interface ExportCsvResponse {
+  kind: ExportKind;
+  /** Suggested download file name. */
+  filename: string;
+  /** The same CSV text `npm run export:csv` writes (D32 headers). */
+  csv: string;
+  rows: number;
+  pairCounts: ExportPairCounts | null;
+  /** Delivery figures copied from the delivery CSV row; null for other kinds. */
+  delivery: {
+    completenessNumerator: number | null;
+    completenessDenominator: number | null;
+    completenessNote: string;
+    firstAttemptNote: string;
+  } | null;
+}
 
 export type ApiErrorCode =
   /** No session token was sent: the device has not paired. */

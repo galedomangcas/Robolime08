@@ -3,8 +3,9 @@ import { useMemo, useState } from 'react';
 import { createLocalGatewayDataSource } from '../data/dataSource';
 
 import type { GatewayClient } from '../data/gatewayClient';
-import type { SessionStore, StoredSession } from '../data/sessionStore';
+import type { KeyValueStorage, SessionStore, StoredSession } from '../data/sessionStore';
 import type { Timers } from '../data/statusPoller';
+import { FieldSelectionGate } from './FieldSelectionScreen';
 import { PairingScreen } from './PairingScreen';
 import { StatusScreen } from './StatusScreen';
 
@@ -13,6 +14,8 @@ interface AppRootProps {
   store: SessionStore;
   now?: () => Date;
   timers?: Timers;
+  /** Where the field choice is kept (D54); null skips the selection step. */
+  selectionStorage?: KeyValueStorage | null;
 }
 
 const SESSION_ENDED_NOTICE = 'The gateway no longer accepts this device’s pairing (it expired or was replaced). Pair again.';
@@ -22,7 +25,7 @@ const SESSION_ENDED_NOTICE = 'The gateway no longer accepts this device’s pair
  * even if the gateway is unreachable (field use must not lock the user out);
  * it is cleared only when the gateway itself rejects it.
  */
-export function AppRoot({ client, store, now, timers }: AppRootProps) {
+export function AppRoot({ client, store, now, timers, selectionStorage = null }: AppRootProps) {
   const [session, setSession] = useState<StoredSession | null>(() => store.load());
   const [notice, setNotice] = useState<string | null>(null);
   // Field mode only: the local gateway adapter (no cloud adapter exists yet).
@@ -42,22 +45,25 @@ export function AppRoot({ client, store, now, timers }: AppRootProps) {
     );
   }
 
+  const endSession = () => {
+    store.clear();
+    setNotice(SESSION_ENDED_NOTICE);
+    setSession(null);
+  };
   return (
-    <StatusScreen
-      dataSource={dataSource}
-      session={session}
-      now={now}
-      timers={timers}
-      onSessionInvalid={() => {
-        store.clear();
-        setNotice(SESSION_ENDED_NOTICE);
-        setSession(null);
-      }}
-      onForget={() => {
-        store.clear();
-        setNotice('This browser no longer stores the pairing. The gateway session itself was not revoked.');
-        setSession(null);
-      }}
-    />
+    <FieldSelectionGate dataSource={dataSource} token={session.token} robotId={session.robot.id} storage={selectionStorage} onSessionInvalid={endSession}>
+      <StatusScreen
+        dataSource={dataSource}
+        session={session}
+        now={now}
+        timers={timers}
+        onSessionInvalid={endSession}
+        onForget={() => {
+          store.clear();
+          setNotice('This browser no longer stores the pairing. The gateway session itself was not revoked.');
+          setSession(null);
+        }}
+      />
+    </FieldSelectionGate>
   );
 }

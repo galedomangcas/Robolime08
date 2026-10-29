@@ -4,6 +4,8 @@ import {
   STALE_THRESHOLD_SECONDS,
   type ApiErrorBody,
   type ApiErrorCode,
+  type ExportCsvResponse,
+  type ExportRunsResponse,
   type FieldResponse,
   type FieldSelectionResponse,
   type PairingResponse,
@@ -26,6 +28,7 @@ import { getRun, listRunReadings } from '../store/readings';
 import { getRecommendationForRun } from '../store/recommendations';
 import { getActiveField, getRobot } from '../store/robots';
 import { getLatestStatus } from '../store/status';
+import { buildExportCsv, listExportRuns } from './exportRoutes';
 
 /**
  * Transport-independent handler for the local read-only API (contract:
@@ -57,6 +60,8 @@ export type ApiResponseBody =
   | RunsResponse
   | RunReadingsResponse
   | RunRecommendationResponse
+  | ExportRunsResponse
+  | ExportCsvResponse
   | ApiErrorBody;
 
 export interface ApiResponse {
@@ -259,6 +264,17 @@ export function createLocalApi(options: LocalApiOptions) {
         .prepare(`${RUN_SUMMARY_SQL} GROUP BY r.id ORDER BY first_recorded DESC, r.id`)
         .all(robotId);
       return ok({ runs: rows.map(toRunSummary) });
+    }
+
+    // Research exports (D54). Verification runs are listed here only.
+    if (path === API_V1_ROUTES.exportRuns) {
+      if (req.method !== 'GET') return fail('METHOD_NOT_ALLOWED');
+      return ok({ runs: listExportRuns(db, robotId) });
+    }
+    if (path === API_V1_ROUTES.exportCsv) {
+      if (req.method !== 'POST') return fail('METHOD_NOT_ALLOWED');
+      const result = buildExportCsv(db, robotId, req.body);
+      return result.ok ? ok(result.value) : fail(result.code, result.message);
     }
 
     const sub = RUN_SUB_ROUTE.exec(path);

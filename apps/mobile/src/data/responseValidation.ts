@@ -6,6 +6,10 @@ import {
   type ComponentCheck,
   type CropRecommendation,
   type CropScore,
+  type ExportCsvResponse,
+  type ExportRunsResponse,
+  type FieldResponse,
+  type FieldSelectionResponse,
   type PairingResponse,
   type RobotStatus,
   type RobotStatusResponse,
@@ -250,4 +254,47 @@ export function isReadingsForRun(v: RunReadingsResponse, requestedRunId: string)
 
 export function isRecommendationForRun(v: RunRecommendationResponse, requestedRunId: string): boolean {
   return v.recommendation.runId === requestedRunId;
+}
+
+const isNullableNumber = (v: unknown) => v === null || isFiniteNumber(v);
+
+/** Field + cells (D54). Cell grid positions and centres may be absent until surveyed. */
+export function isFieldResponse(v: unknown): v is FieldResponse {
+  if (!isObject(v) || !isObject(v.field) || !Array.isArray(v.cells)) return false;
+  const f = v.field;
+  return (
+    isString(f.id) && isString(f.name) && isString(f.locationLabel) && isNullableNumber(f.areaSquareMeters) &&
+    isFiniteNumber(f.cellSizeMeters) && isNullableNumber(f.totalCells) && typeof f.isSynthetic === 'boolean' &&
+    v.cells.every(
+      (c) =>
+        isObject(c) && isFiniteNumber(c.cellIndex) && isNullableNumber(c.gridRow) && isNullableNumber(c.gridColumn) &&
+        (c.center === null || (isObject(c.center) && isFiniteNumber(c.center.latitude) && isFiniteNumber(c.center.longitude))),
+    )
+  );
+}
+
+export function isFieldSelectionResponse(v: unknown): v is FieldSelectionResponse {
+  return isObject(v) && isObject(v.selection) && isString(v.selection.fieldId) && isIsoDateTime(v.selection.confirmedAt);
+}
+
+const RUN_TYPES: ReadonlySet<unknown> = new Set(['dosing', 'verification']);
+export function isExportRunsResponse(v: unknown): v is ExportRunsResponse {
+  return (
+    isObject(v) && Array.isArray(v.runs) &&
+    v.runs.every(
+      (r) => isObject(r) && isString(r.id) && isString(r.sourceRunId) && RUN_TYPES.has(r.runType) &&
+        isFiniteNumber(r.readingCount) && isNullableIso(r.firstRobotRecordedAt) && typeof r.isSynthetic === 'boolean',
+    )
+  );
+}
+
+const EXPORT_KINDS: ReadonlySet<unknown> = new Set(['readings', 'paired', 'delivery']);
+export function isExportCsvResponse(v: unknown): v is ExportCsvResponse {
+  if (!isObject(v) || !EXPORT_KINDS.has(v.kind) || !isString(v.filename) || !isString(v.csv) || !isFiniteNumber(v.rows)) return false;
+  const pc = v.pairCounts;
+  const d = v.delivery;
+  return (
+    (pc === null || (isObject(pc) && ['paired', 'missing_verification', 'missing_dosing', 'ambiguous_multiple_readings'].every((k) => isFiniteNumber(pc[k])))) &&
+    (d === null || (isObject(d) && isNullableNumber(d.completenessNumerator) && isNullableNumber(d.completenessDenominator) && isString(d.completenessNote) && isString(d.firstAttemptNote)))
+  );
 }

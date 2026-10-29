@@ -34,6 +34,7 @@ function fakeReader(overrides: Partial<CloudReader> = {}): CloudReader {
     runs: async () => ({ ok: true, data: [] }),
     runReadings: async () => ({ ok: true, data: null }),
     runRecommendation: async () => ({ ok: true, data: null }),
+    field: async () => ({ ok: true, data: null }),
     ...overrides,
   };
 }

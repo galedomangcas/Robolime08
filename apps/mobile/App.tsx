@@ -43,7 +43,7 @@ export default function App() {
     return (
       <>
         {online !== null ? (
-          <OnlineRoot auth={online.auth} reader={online.reader} projectRef={cloudConfig.ok ? cloudConfig.projectRef : undefined} />
+          <OnlineRoot auth={online.auth} reader={online.reader} projectRef={cloudConfig.ok ? cloudConfig.projectRef : undefined} selectionStorage={browserStorage()} />
         ) : (
           <OnlineUnavailableScreen reason={deploymentTarget === 'online' ? 'online' : 'invalid'} />
         )}
@@ -54,7 +54,7 @@ export default function App() {
 
   return (
     <>
-      {client === null ? <LandingScreen gatewayUrl={null} /> : <AppRoot client={client} store={store} />}
+      {client === null ? <LandingScreen gatewayUrl={null} /> : <AppRoot client={client} store={store} selectionStorage={browserStorage()} />}
       <StatusBar style="dark" />
     </>
   );

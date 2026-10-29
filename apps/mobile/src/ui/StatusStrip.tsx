@@ -5,11 +5,12 @@ import { colors, radius } from '../theme';
 import { SelfCheckDots } from './primitives';
 
 /**
- * The dark robot monitoring strip from the mockups (D50). It shows only what
- * the gateway reports: state, faults, battery voltage, commanded lime, robot
- * time and age. By decision it shows no cell progress (D29, D33), no battery
- * health (#10) and no self-check result (#9); the mockup's progress bar is
- * omitted. Status is never labelled live.
+ * The dark robot monitoring strip from the mockups (D50, D54). It shows what
+ * the robot reports: state with cell progress ("Working: 7 of 20 cells
+ * (35%)") and a progress bar, faults, battery voltage, commanded lime, robot
+ * time and age. Placeholders, labelled as such: battery health ("TBC", #10)
+ * and the component self-check (bit meanings unspecified, #9: the dots are
+ * outlined and never shown as passed). Status is never labelled live.
  */
 export function StatusStrip({ view, wide }: { view: StatusView; wide: boolean }) {
   const hasStatus = view.emptyMessage === null;
@@ -27,15 +28,25 @@ export function StatusStrip({ view, wide }: { view: StatusView; wide: boolean })
           )}
         </View>
         <Text style={styles.state}>{hasStatus ? view.stateLabel : view.emptyMessage}</Text>
+        {view.progress !== null && (
+          <View
+            style={styles.track}
+            accessibilityRole="progressbar"
+            accessibilityLabel={`${view.progress.completed} of ${view.progress.total} cells`}
+            accessibilityValue={{ min: 0, max: view.progress.total, now: view.progress.completed }}
+          >
+            <View style={[styles.bar, { width: `${view.progress.percent}%` }]} />
+          </View>
+        )}
         {view.faults.length > 0 && <Text style={styles.faults}>Reported faults: {view.faults.join(', ')}</Text>}
         {view.robotAt !== null && <Text style={styles.small}>Robot time: {formatLocalTimestamp(view.robotAt)}</Text>}
       </View>
       <View style={[styles.stats, wide && styles.statsWide]}>
-        <Stat value={view.batteryVoltage ?? '—'} label="Battery voltage · health TBC" />
-        <Stat value={view.limeCommanded ?? '—'} label="Total lime commanded" />
+        <Stat value={view.batteryVoltage ?? '—'} label="Battery · health TBC" />
+        <Stat value={view.limeCommanded ?? '—'} label="Lime commanded (not measured flow)" />
         <View style={styles.stat}>
           <SelfCheckDots count={8} onDark />
-          <Text style={styles.statLabel}>Component self-check: Unknown</Text>
+          <Text style={styles.statLabel}>Self-check: not reported yet (placeholder)</Text>
         </View>
       </View>
     </View>
@@ -54,7 +65,7 @@ function Stat({ value, label }: { value: string; label: string }) {
 const styles = StyleSheet.create({
   strip: { backgroundColor: colors.ink, borderRadius: radius.card + 4, padding: 20, gap: 16 },
   stripWide: { flexDirection: 'row', alignItems: 'center', gap: 28 },
-  main: { gap: 6 },
+  main: { gap: 8 },
   mainWide: { flex: 1.3 },
   topRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 },
   headingPill: { backgroundColor: '#1F4A2C', borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 4 },
@@ -63,7 +74,9 @@ const styles = StyleSheet.create({
   headingTextStale: { color: '#FFD98A' },
   freshness: { color: colors.onDarkMuted, fontSize: 15 },
   freshnessStale: { color: '#FFD98A', fontWeight: '700' },
-  state: { color: colors.onDark, fontSize: 28, fontWeight: '800', letterSpacing: -0.4 },
+  state: { color: colors.onDark, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
+  track: { height: 10, borderRadius: 5, backgroundColor: '#3A4238', overflow: 'hidden' },
+  bar: { height: '100%', borderRadius: 5, backgroundColor: colors.brandBright },
   faults: { color: '#FFB4A3', fontSize: 16, fontWeight: '700' },
   small: { color: colors.onDarkMuted, fontSize: 13 },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 18 },

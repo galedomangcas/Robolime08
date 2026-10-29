@@ -1660,3 +1660,54 @@ Requested by the project owner (finalize Supabase, online app, pairing code `103
   - **Diagnosis aids:** the online error screen shows the configured project
     ref (public), and an "Enter a claim code instead" button clears a stored
     sign-in that no longer works.
+## D54 — Full mockup UI built for the demo, with labelled placeholders (scope change)
+
+**Status: DECIDED by the project owner (2026-10-29): "build all, put placeholders for demo purposes".**
+This **supersedes D29 for the UI** (field selection, cell map, cell progress)
+and reverses D33's "no cell progress". CLAUDE.md §4 still marks these
+*(excluded this semester)*; reconcile CLAUDE.md and the manuscript with D54.
+
+- **Built, after `ui reference/RoboLime App Mockup.pdf` p2–p6 and the laptop page:**
+  - **p2 field selection:** a one-field card, two "Other fields not yet
+    available." placeholders and a confirm sheet. It is a record of intent:
+    stored by the gateway (`POST /field-selections`) on the field laptop, and
+    on this browser only online. Shown once per robot per device, and skipped
+    where the device cannot store it (native app, blocked storage).
+  - **p3 field:** "Working: x of y cells (z%)" with a progress bar, the field
+    header, "N of M measured cells needed lime · K cells left" and the field
+    map with zoom. Without a provisioned field the map uses a labelled
+    placeholder 5-column layout.
+  - **p4 cell sheet:** opened from a map cell. It shows the band label
+    (Too acidic / Near target / At target).
+  - **p5 run results:** four tiles (cells limed, commanded lime, median
+    measured pH, median expected pH) and the map with a "Measured pH /
+    Expected after lime" toggle.
+  - **p6 exports:** dosing and verification run pickers. The three CSVs are
+    built by the gateway over two new loopback routes, `GET /exports/runs` and
+    `POST /exports/csv` (read-only, same builders and headers as
+    `export:csv`), and downloaded in the browser. Pair counts and post-retry
+    completeness are shown.
+  - **Laptop page:** a cell-readings table beside the map.
+- **Placeholders, always labelled on screen:**
+  - near-target cut-off **5.50**: `apps/mobile/src/config/phBands.ts`, OPEN_ITEMS #4
+  - self-check dots: "not reported yet (placeholder)"; never "8/8 OK" (#9)
+  - battery health: "TBC" (#10)
+  - first-attempt delivery: "Not computed" (#15)
+  - the "Next" cell: assumes the robot visits cells in number order
+  - the placeholder grid layout
+- **Rules kept:**
+  - cells are placed by cell index, never GPS
+  - every colour has a text label, and "too acidic" also has stripes
+  - verification runs appear only in the export area
+  - observe-only: no robot downlink
+  - displayed cell numbers are 1-based (C1 = cell index 0); exports keep the
+    raw `cell_index`
+  - online exports: none (field laptop only)
+- **Verified:**
+  - unit and screen tests
+  - gateway export-route tests
+  - headless-Edge run on loopback with the synthetic demo database, pairing
+    through the real UI with `10302026`: field selection → field map → cell
+    sheet → results with tiles and map → a downloaded readings CSV, plus the
+    laptop layout
+  - not verified on a real phone, outdoors, or with real robot data

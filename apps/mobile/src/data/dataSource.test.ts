@@ -6,6 +6,6 @@ describe('local gateway data source', () => {
     const fetch: FetchLike = async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => '{}' });
     const source = createLocalGatewayDataSource(createGatewayClient({ baseUrl: '', fetch }));
     expect(source.kind).toBe('local-gateway');
-    expect(Object.keys(source).sort()).toEqual(['description', 'kind', 'robotStatus', 'runReadings', 'runRecommendation', 'runs', 'sourceName']);
+    expect(Object.keys(source).sort()).toEqual(['description', 'exports', 'field', 'kind', 'robotStatus', 'runReadings', 'runRecommendation', 'runs', 'selectField', 'sourceName']);
   });
 });

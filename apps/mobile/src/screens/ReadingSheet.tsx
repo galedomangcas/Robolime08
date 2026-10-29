@@ -3,17 +3,18 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import type { ReadingRow } from '../data/resultsView';
 import { colors, radius } from '../theme';
 import { Icon, type IconName } from '../ui/Icon';
-import { PH_TARGET, PhGauge, textStyles } from '../ui/primitives';
+import { PH_BAND_LABEL, PH_BAND_PLACEHOLDER_NOTE, phBand } from '../config/phBands';
+import { BAND_COLOR } from '../ui/FieldMap';
+import { PhGauge, textStyles } from '../ui/primitives';
 
 /**
- * One reading in detail, laid out after mockup page 4 (D50). It opens from a
- * reading in a run's list, not from a field map (the map is excluded, D29).
- * The pH is compared only with the confirmed target 6.00; the mockup's "Too
- * acidic / Near target" band label is not shown, because the near-target
- * cut-off is unconfirmed (OPEN_ITEMS #4).
+ * One reading in detail, laid out after mockup page 4 (D50, D54). It opens from
+ * a field-map cell or a reading in a run's list. The band label (Too acidic /
+ * Near target / At target) uses the central configuration; its near-target
+ * cut-off is a labelled placeholder (OPEN_ITEMS #4).
  */
 export function ReadingSheet({ row, synthetic, onClose }: { row: ReadingRow; synthetic: boolean; onClose: () => void }) {
-  const belowTarget = row.phValue < PH_TARGET;
+  const band = phBand(row.phValue);
   return (
     <Modal transparent animationType="slide" visible onRequestClose={onClose}>
       <View style={styles.backdrop}>
@@ -35,14 +36,16 @@ export function ReadingSheet({ row, synthetic, onClose }: { row: ReadingRow; syn
             <View style={styles.phCard}>
               <View style={styles.phHeader}>
                 <Text style={styles.phLabel}>Soil pH</Text>
-                <View style={[styles.targetPill, belowTarget ? styles.targetBelow : styles.targetAt]}>
-                  <Text style={[styles.targetText, belowTarget ? { color: colors.danger } : { color: colors.brand }]}>
-                    {belowTarget ? 'Below target 6.00' : 'At or above target 6.00'}
+                <View style={[styles.targetPill, { backgroundColor: band === 'at-target' ? colors.brandSoft : band === 'near-target' ? colors.warningSurface : colors.dangerSoft }]}>
+                  <View style={[styles.bandDot, { backgroundColor: BAND_COLOR[band] }]} />
+                  <Text style={[styles.targetText, { color: band === 'at-target' ? colors.brand : band === 'near-target' ? colors.warningText : colors.danger }]}>
+                    {PH_BAND_LABEL[band]}
                   </Text>
                 </View>
               </View>
               <Text style={styles.phValue}>{row.ph}</Text>
               <PhGauge value={row.phValue} />
+              <Text style={textStyles.note}>{PH_BAND_PLACEHOLDER_NOTE}</Text>
             </View>
 
             <View style={styles.tiles}>
@@ -94,9 +97,8 @@ const styles = StyleSheet.create({
   phCard: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.card, padding: 18, gap: 10 },
   phHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   phLabel: { fontSize: 18, fontWeight: '700', color: colors.text },
-  targetPill: { borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 5 },
-  targetBelow: { backgroundColor: colors.dangerSoft },
-  targetAt: { backgroundColor: colors.brandSoft },
+  targetPill: { borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 5, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  bandDot: { width: 10, height: 10, borderRadius: 2 },
   targetText: { fontSize: 14, fontWeight: '800' },
   phValue: { fontSize: 64, fontWeight: '800', color: colors.text, letterSpacing: -1 },
   tiles: { flexDirection: 'row', gap: 10 },

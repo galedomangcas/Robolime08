@@ -5,11 +5,12 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View, useWi
 import type { CloudAuth, CloudAuthFailure } from '../data/cloudAuth';
 import type { CloudFailure, CloudReader, CloudResult } from '../data/cloudReader';
 import { createCloudDataSource } from '../data/dataSource';
-import type { StoredSession } from '../data/sessionStore';
+import type { KeyValueStorage, StoredSession } from '../data/sessionStore';
 import type { Timers } from '../data/statusPoller';
 import { WIDE_BREAKPOINT, colors, radius } from '../theme';
 import { Icon } from '../ui/Icon';
 import { IconTile, InfoBox, LogoTile, PrimaryButton, SecondaryButton, StripedHero, textStyles } from '../ui/primitives';
+import { FieldSelectionGate } from './FieldSelectionScreen';
 import { StatusScreen } from './StatusScreen';
 
 interface OnlineRootProps {
@@ -17,6 +18,8 @@ interface OnlineRootProps {
   reader: CloudReader;
   /** Public Supabase project ref, shown for diagnosis (not a secret). */
   projectRef?: string;
+  /** Where the field choice is kept on this browser (D54); null skips the selection step. */
+  selectionStorage?: KeyValueStorage | null;
   now?: () => Date;
   timers?: Timers;
 }
@@ -79,7 +82,7 @@ export function signInFailureMessage(failure: CloudAuthFailure): string {
  * status / results screens as the field build, fed by the cloud data source.
  * The robot is never named by the client: RLS shows only claimed robots.
  */
-export function OnlineRoot({ auth, reader, projectRef, now, timers }: OnlineRootProps) {
+export function OnlineRoot({ auth, reader, projectRef, selectionStorage = null, now, timers }: OnlineRootProps) {
   // No stored sign-in: straight to the claim step, without a request.
   const [phase, setPhase] = useState<Phase>(() => (auth.current() === null ? { kind: 'claim' } : { kind: 'checking' }));
   const [notice, setNotice] = useState<string | null>(null);
@@ -104,6 +107,7 @@ export function OnlineRoot({ auth, reader, projectRef, now, timers }: OnlineRoot
       <OnlineViewer
         robot={phase.robot}
         reader={reader}
+        selectionStorage={selectionStorage}
         now={now}
         timers={timers}
         onSessionInvalid={() => {
@@ -145,6 +149,7 @@ export function OnlineRoot({ auth, reader, projectRef, now, timers }: OnlineRoot
 function OnlineViewer({
   robot,
   reader,
+  selectionStorage,
   onSessionInvalid,
   onSignOut,
   now,
@@ -152,6 +157,7 @@ function OnlineViewer({
 }: {
   robot: RobotSummary;
   reader: CloudReader;
+  selectionStorage: KeyValueStorage | null;
   onSessionInvalid: () => void;
   onSignOut: () => void;
   now?: () => Date;
@@ -164,7 +170,9 @@ function OnlineViewer({
     [robot],
   );
   return (
-    <StatusScreen dataSource={dataSource} session={session} onSessionInvalid={onSessionInvalid} onForget={onSignOut} now={now} timers={timers} />
+    <FieldSelectionGate dataSource={dataSource} token={session.token} robotId={robot.id} storage={selectionStorage} onSessionInvalid={onSessionInvalid}>
+      <StatusScreen dataSource={dataSource} session={session} onSessionInvalid={onSessionInvalid} onForget={onSignOut} now={now} timers={timers} />
+    </FieldSelectionGate>
   );
 }
 

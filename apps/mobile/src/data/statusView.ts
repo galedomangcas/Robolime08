@@ -4,7 +4,7 @@ import {
   describeFreshness,
   formatVoltage,
   formatVolumeMl,
-  robotStateLabelWithoutProgress,
+  robotStateLabel,
   type RobotStatus,
 } from '@robolime/shared';
 
@@ -55,6 +55,8 @@ export interface StatusView {
   limeCommanded: string | null;
   /** Robot-side time of the status, as an ISO string (formatted by the screen). */
   robotAt: string | null;
+  /** Cell progress from the latest status (D54); null when not working or unknown. */
+  progress: { completed: number; total: number; percent: number } | null;
 }
 
 export function connectionLabel(connection: Connection, source = 'Field gateway'): string {
@@ -98,6 +100,7 @@ export function buildStatusView({ connection, snapshot, now, sourceName }: Statu
       batteryVoltage: null,
       limeCommanded: null,
       robotAt: null,
+      progress: null,
     };
   }
 
@@ -132,11 +135,15 @@ export function buildStatusView({ connection, snapshot, now, sourceName }: Statu
     freshnessLabel,
     // Old data is never shown as current while the gateway cannot be reached.
     isStale: isStale || unavailable,
-    stateLabel: robotStateLabelWithoutProgress({ state: status.state, errorFlags: status.errorFlags }),
+    stateLabel: robotStateLabel({ state: status.state, errorFlags: status.errorFlags, cellsCompleted: status.cellsCompleted, totalCells: status.totalCells }),
     faults: status.errorFlags.map((flag) => ERROR_FLAG_LABELS[flag]),
     batteryVoltage: formatVoltage(status.batteryVoltage),
     limeCommanded: formatVolumeMl(status.totalLimeCommandedMl),
     robotAt: status.timestamps.robotAt,
+    progress:
+      status.state === 'WORKING' && status.totalCells > 0 && status.cellsCompleted >= 0 && status.cellsCompleted <= status.totalCells
+        ? { completed: status.cellsCompleted, total: status.totalCells, percent: Math.round((status.cellsCompleted / status.totalCells) * 100) }
+        : null,
   };
 }
 

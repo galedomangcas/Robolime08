@@ -136,7 +136,7 @@ describe('cloud reader (read-only, session required)', () => {
     const { fetch, calls } = fakeFetch({ status: 200, body: [] });
     const reader = createCloudReader({ config: CONFIG, session: signedIn, fetch });
     expect(Object.keys(reader).sort()).toEqual([
-      'claimRobot', 'claimedRobotIds', 'claimedRobots', 'robotStatus', 'runReadings', 'runRecommendation', 'runs',
+      'claimRobot', 'claimedRobotIds', 'claimedRobots', 'field', 'robotStatus', 'runReadings', 'runRecommendation', 'runs',
     ]);
     await reader.claimedRobotIds();
     await reader.claimedRobots();

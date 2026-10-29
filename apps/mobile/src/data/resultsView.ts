@@ -91,7 +91,8 @@ export function buildReadingRows(readings: readonly CellReading[]): ReadingRow[]
     .sort((a, b) => a.cellIndex - b.cellIndex || a.seq - b.seq)
     .map((r) => ({
       key: `${r.cellIndex}:${r.seq}`,
-      title: `Cell ${r.cellIndex} · record ${r.seq}`,
+      // Displayed cell numbers are 1-based (C1 = cell index 0, D54); exports keep the raw index.
+      title: `Cell ${r.cellIndex + 1} · record ${r.seq}`,
       phValue: r.ph,
       ph: formatPh(r.ph),
       ec: formatEcUnconfirmed(r.ec),

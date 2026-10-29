@@ -1,4 +1,9 @@
 import type {
+  ExportCsvRequest,
+  ExportCsvResponse,
+  ExportRunsResponse,
+  FieldResponse,
+  FieldSelectionResponse,
   RobotStatusResponse,
   RunReadingsResponse,
   RunRecommendationResponse,
@@ -31,6 +36,18 @@ export interface FieldDataSource {
   runs(token: string): Promise<GatewayResult<RunsResponse>>;
   runReadings(token: string, runId: string): Promise<GatewayResult<RunReadingsResponse>>;
   runRecommendation(token: string, runId: string): Promise<GatewayResult<RunRecommendationResponse>>;
+  /** The active field and its cells; NO_ACTIVE_FIELD / NOT_FOUND when none is provisioned (D54). */
+  field(token: string): Promise<GatewayResult<FieldResponse>>;
+  /**
+   * Records the user's field choice for the next run: a record of intent only;
+   * the robot never reads it. The cloud keeps no copy (kept on this browser only).
+   */
+  selectField(token: string, fieldId: string): Promise<GatewayResult<FieldSelectionResponse>>;
+  /** Research CSV exports; only the field gateway builds them (no cloud export path). */
+  exports: null | {
+    runs(token: string): Promise<GatewayResult<ExportRunsResponse>>;
+    csv(token: string, request: ExportCsvRequest): Promise<GatewayResult<ExportCsvResponse>>;
+  };
 }
 
 /** Field mode: the laptop gateway's loopback API and its SQLite store. Works with no internet. */
@@ -43,6 +60,9 @@ export function createLocalGatewayDataSource(client: GatewayClient): FieldDataSo
     runs: (token) => client.runs(token),
     runReadings: (token, runId) => client.runReadings(token, runId),
     runRecommendation: (token, runId) => client.runRecommendation(token, runId),
+    field: (token) => client.field(token),
+    selectField: (token, fieldId) => client.selectField(token, fieldId),
+    exports: { runs: (token) => client.exportRuns(token), csv: (token, request) => client.exportCsv(token, request) },
   };
 }
 
@@ -88,5 +108,10 @@ export function createCloudDataSource(reader: CloudReader, robotId: string): Fie
       mapResult(await reader.runRecommendation(robotId, runId), (data) =>
         data === null ? { ok: false, failure: NOT_FOUND } : { ok: true, data },
       ),
+    field: async () =>
+      mapResult(await reader.field(robotId), (data) => (data === null ? { ok: false, failure: NOT_FOUND } : { ok: true, data })),
+    // No cloud table holds selections (they are local-only, D52): the caller keeps the choice in this browser.
+    selectField: async (_token, fieldId) => ({ ok: true, data: { selection: { fieldId, confirmedAt: new Date().toISOString() } } }),
+    exports: null,
   };
 }

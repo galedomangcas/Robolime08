@@ -1,6 +1,11 @@
 import {
   API_V1_ROUTES,
   type ApiErrorCode,
+  type ExportCsvRequest,
+  type ExportCsvResponse,
+  type ExportRunsResponse,
+  type FieldResponse,
+  type FieldSelectionResponse,
   type PairingResponse,
   type RobotStatusResponse,
   type RunReadingsResponse,
@@ -11,6 +16,10 @@ import {
 
 import { REQUEST_TIMEOUT_MS } from '../config/timing';
 import {
+  isExportCsvResponse,
+  isExportRunsResponse,
+  isFieldResponse,
+  isFieldSelectionResponse,
   isPairingResponse,
   isReadingsForRun,
   isRecommendationForRun,
@@ -75,6 +84,13 @@ export interface GatewayClient {
   runReadings(token: string, runId: string): Promise<GatewayResult<RunReadingsResponse>>;
   /** NOT_FOUND (HTTP 404) when no recommendation has been stored for the run. */
   runRecommendation(token: string, runId: string): Promise<GatewayResult<RunRecommendationResponse>>;
+  /** NO_ACTIVE_FIELD (HTTP 404) when no field is provisioned (D54). */
+  field(token: string): Promise<GatewayResult<FieldResponse>>;
+  /** Records the user's field choice as intent only; the robot never reads it. */
+  selectField(token: string, fieldId: string): Promise<GatewayResult<FieldSelectionResponse>>;
+  /** Research export area (D54): all runs, including verification runs. */
+  exportRuns(token: string): Promise<GatewayResult<ExportRunsResponse>>;
+  exportCsv(token: string, request: ExportCsvRequest): Promise<GatewayResult<ExportCsvResponse>>;
 }
 
 function errorCodeOf(body: unknown): ApiErrorCode | null {
@@ -164,5 +180,9 @@ export function createGatewayClient(options: GatewayClientOptions): GatewayClien
         token,
         (json): json is RunRecommendationResponse => isRunRecommendationResponse(json) && isRecommendationForRun(json, runId),
       ),
+    field: (token) => call<FieldResponse>('GET', API_V1_ROUTES.field, token, isFieldResponse),
+    selectField: (token, fieldId) => call<FieldSelectionResponse>('POST', API_V1_ROUTES.fieldSelections, token, isFieldSelectionResponse, { fieldId }),
+    exportRuns: (token) => call<ExportRunsResponse>('GET', API_V1_ROUTES.exportRuns, token, isExportRunsResponse),
+    exportCsv: (token, request) => call<ExportCsvResponse>('POST', API_V1_ROUTES.exportCsv, token, isExportCsvResponse, request),
   };
 }

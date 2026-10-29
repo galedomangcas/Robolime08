@@ -23,6 +23,7 @@ import { WIDE_BREAKPOINT, colors, radius } from '../theme';
 import { Icon } from '../ui/Icon';
 import { Card, IconTile, InfoBox, SecondaryButton, SyntheticBadge, textStyles } from '../ui/primitives';
 import { ReadingSheet } from './ReadingSheet';
+import { RunFieldSummary } from './RunFieldSummary';
 
 interface ResultsScreenProps {
   dataSource: FieldDataSource;
@@ -206,6 +207,15 @@ function RunDetail({
           </>
         )}
       </View>
+
+      {readings.kind === 'loaded' && readings.data.readings.length > 0 && (
+        <RunFieldSummary
+          dataSource={dataSource}
+          token={token}
+          readings={readings.data.readings}
+          onOpenCell={(reading) => setOpenReading(buildReadingRows([reading])[0] ?? null)}
+        />
+      )}
 
       <Card>
         <Text accessibilityRole="header" style={textStyles.sectionTitle}>

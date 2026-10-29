@@ -111,6 +111,10 @@ function fakeClient() {
       calls.push(`recommendation:${token}:${runId}`);
       return state.recommendationFor ? state.recommendationFor(runId) : state.recommendation;
     },
+    field: async () => ({ ok: false, failure: { kind: 'api', status: 404, code: 'NO_ACTIVE_FIELD', retryAfterSeconds: null } }),
+    selectField: async (_t: string, fieldId: string) => ({ ok: true, data: { selection: { fieldId, confirmedAt: '2026-03-01T12:00:00.000Z' } } }),
+    exportRuns: async () => ({ ok: true, data: { runs: [] } }),
+    exportCsv: async () => ({ ok: false, failure: { kind: 'invalid-response' } }),
   };
   return { client, calls, state };
 }
@@ -120,8 +124,19 @@ const noTimers: Timers = { setTimeout: () => 0, clearTimeout: () => undefined };
 async function openResults(fake: ReturnType<typeof fakeClient>) {
   const store = createMemorySessionStore();
   store.save(SESSION);
+  // The Field section (opened first) loads the latest run for its map (D54). Answer those
+  // start-up requests from the default data and forget them, so each test sees only the
+  // Results section's own requests and scripted answers.
+  const scripted = { runsFor: fake.state.runsFor, readingsFor: fake.state.readingsFor, runs: fake.state.runs, readings: fake.state.readings };
+  fake.state.runsFor = null;
+  fake.state.readingsFor = null;
+  fake.state.runs = ok<RunsResponse>({ runs: [RUN] });
+  fake.state.readings = ok<RunReadingsResponse>({ run: RUN, readings: [] });
   await render(<AppRoot client={fake.client} store={store} now={() => NOW} timers={noTimers} />);
   await screen.findByText('Latest report');
+  await act(async () => {});
+  Object.assign(fake.state, scripted);
+  fake.calls.length = 0;
   await act(async () => fireEvent.press(screen.getByRole('tab', { name: 'Results' })));
   return store;
 }
@@ -134,17 +149,18 @@ describe('Results (Phase 5, local field mode)', () => {
     await openResults(fake);
 
     // Monitoring strip still pinned on the results section.
-    expect(screen.getByText('Working')).toBeTruthy();
-    expect(screen.getByText('Component self-check: Unknown')).toBeTruthy();
+    expect(screen.getByText('Working: 7 of 20 cells (35%)')).toBeTruthy();
+    expect(screen.getByText('Self-check: not reported yet (placeholder)')).toBeTruthy();
     expect(screen.queryByText('Forget this device…')).toBeNull();
 
     expect(await screen.findByText('Dosing run R-0001 (synthetic demo data)')).toBeTruthy();
     expect(screen.getByText(/Source: Field gateway on this laptop \(works without internet\)/)).toBeTruthy();
     await act(async () => fireEvent.press(screen.getByRole('button', { name: 'Dosing run R-0001 (synthetic demo data)' })));
 
-    expect(await screen.findByText('Cell 0 · record 1')).toBeTruthy();
+    expect(await screen.findByText('Cell 1 · record 1')).toBeTruthy();
     expect(fake.calls).toEqual(expect.arrayContaining(['runs:stored-token', 'readings:stored-token:run-1', 'recommendation:stored-token:run-1']));
-    expect(screen.getByText('5.21')).toBeTruthy();
+    // Shown in the reading list and on the run's field map (D54).
+    expect(screen.getAllByText('5.21').length).toBeGreaterThan(0);
     expect(screen.getByText('5.95')).toBeTruthy();
     expect(screen.getAllByText('Expected post-correction pH').length).toBe(2);
     // One reading row (120 mL) plus the run total (120 + 0 mL).
@@ -165,9 +181,8 @@ describe('Results (Phase 5, local field mode)', () => {
     const text = allText();
     expect(text).not.toMatch(/predicted/i);
     expect(text).not.toMatch(/verification|observed post-treatment/i);
-    // The progress pattern really detects the excluded format, and the screen does not show it.
-    expect('Working: 7 of 20 cells (35%)').toMatch(PROGRESS);
-    expect(text).not.toMatch(PROGRESS);
+    // D54: cell progress is now shown in the strip while the robot is working.
+    expect(text).toMatch(PROGRESS);
 
     await act(async () => fireEvent.press(screen.getByRole('button', { name: 'Back to dosing runs' })));
     expect(await screen.findByText('Dosing run R-0001 (synthetic demo data)')).toBeTruthy();
@@ -214,7 +229,7 @@ describe('Results (Phase 5, local field mode)', () => {
     await openResults(fake);
     await act(async () => fireEvent.press(await screen.findByRole('button', { name: 'Dosing run R-0001 (synthetic demo data)' })));
     expect(await screen.findByText('Crop recommendation unavailable. Field gateway unavailable: cannot reach it.')).toBeTruthy();
-    expect(screen.getByText('Cell 0 · record 1')).toBeTruthy();
+    expect(screen.getByText('Cell 1 · record 1')).toBeTruthy();
     const count = (prefix: string) => fake.calls.filter((c) => c.startsWith(prefix)).length;
     expect([count('readings:'), count('recommendation:')]).toEqual([1, 1]);
 
@@ -253,7 +268,7 @@ describe('Results (Phase 5, local field mode)', () => {
       expect(screen.getByText('Loading readings…')).toBeTruthy();
       await act(async () => fireEvent.press(screen.getByRole('tab', { name: 'Field' })));
       await act(async () => held.resolve(ok({ run: RUN, readings: [reading(0, 120, 5.21, 5.95)] })));
-      expect(screen.queryByText('Cell 0 · record 1')).toBeNull();
+      expect(screen.queryByText('Cell 1 · record 1')).toBeNull();
       expect(screen.getByText('Forget this device…')).toBeTruthy();
       expect(errors).not.toHaveBeenCalled();
     } finally {
@@ -273,12 +288,12 @@ describe('Results (Phase 5, local field mode)', () => {
     await act(async () => fireEvent.press(await screen.findByRole('button', { name: 'Dosing run R-0001 (synthetic demo data)' })));
     await act(async () => fireEvent.press(screen.getByRole('button', { name: 'Back to dosing runs' })));
     await act(async () => fireEvent.press(await screen.findByRole('button', { name: 'Dosing run R-0002 (synthetic demo data)' })));
-    expect(await screen.findByText('Cell 5 · record 1')).toBeTruthy();
+    expect(await screen.findByText('Cell 6 · record 1')).toBeTruthy();
 
     await act(async () => heldRun1.resolve(ok({ run: RUN, readings: [reading(0, 120, 5.21, 5.95)] })));
     expect(screen.getByText('Dosing run R-0002 (synthetic demo data)')).toBeTruthy();
-    expect(screen.getByText('Cell 5 · record 1')).toBeTruthy();
-    expect(screen.queryByText('Cell 0 · record 1')).toBeNull();
+    expect(screen.getByText('Cell 6 · record 1')).toBeTruthy();
+    expect(screen.queryByText('Cell 1 · record 1')).toBeNull();
     expect(screen.queryByText('Dosing run R-0001 (synthetic demo data)')).toBeNull();
   });
 
@@ -335,7 +350,8 @@ describe('Results (Phase 5, local field mode)', () => {
     expect(screen.getByText('Dosing run R-0002 (synthetic demo data)')).toBeTruthy();
     expect(screen.queryByText('Dosing run R-0001 (synthetic demo data)')).toBeNull();
     expect(screen.queryByText('Loading runs…')).toBeNull();
-    expect(call).toBe(2);
+    // Results asked twice; revisiting Field also reloaded the list for its map (D54).
+    expect(call).toBe(3);
   });
 
   it('clears the loading and error states when a failed run list is retried successfully', async () => {
@@ -377,7 +393,7 @@ describe('Results through the real gateway client', () => {
     await act(async () => fireEvent.press(screen.getByRole('tab', { name: 'Results' })));
     await act(async () => fireEvent.press(await screen.findByRole('button', { name: 'Dosing run R-0001 (synthetic demo data)' })));
     expect(await screen.findByText('Field gateway unavailable: unreadable answer.')).toBeTruthy();
-    expect(screen.queryByText('Cell 5 · record 1')).toBeNull();
+    expect(screen.queryByText('Cell 6 · record 1')).toBeNull();
     expect(screen.queryByText(/R-0002/)).toBeNull();
   });
 });

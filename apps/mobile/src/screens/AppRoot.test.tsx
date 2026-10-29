@@ -45,6 +45,10 @@ function fakeClient() {
     runs: async () => ok({ runs: [] }),
     runReadings: async () => ({ ok: false, failure: { kind: 'api', status: 404, code: 'NOT_FOUND', retryAfterSeconds: null } }),
     runRecommendation: async () => ({ ok: false, failure: { kind: 'api', status: 404, code: 'NOT_FOUND', retryAfterSeconds: null } }),
+    field: async () => ({ ok: false, failure: { kind: 'api', status: 404, code: 'NO_ACTIVE_FIELD', retryAfterSeconds: null } }),
+    selectField: async (_t: string, fieldId: string) => ({ ok: true, data: { selection: { fieldId, confirmedAt: '2026-03-01T12:00:00.000Z' } } }),
+    exportRuns: async () => ({ ok: true, data: { runs: [] } }),
+    exportCsv: async () => ({ ok: false, failure: { kind: 'invalid-response' } }),
   };
   return {
     client,
@@ -110,16 +114,15 @@ describe('AppRoot (local field mode)', () => {
     expect(allText()).not.toContain('WRONG-CODE-1234');
   });
 
-  it('opens straight to status with a stored session and shows the report without cell progress', async () => {
+  it('opens straight to status with a stored session and shows the report with cell progress (D54)', async () => {
     const { fake } = await renderApp(SESSION);
     expect(await screen.findByText('Latest report')).toBeTruthy();
     expect(fake.calls.status).toEqual(['stored-token']);
-    expect(screen.getByText('Working')).toBeTruthy();
+    expect(screen.getByText('Working: 7 of 20 cells (35%)')).toBeTruthy();
     expect(screen.getByText('Reported 30 s ago')).toBeTruthy();
     expect(screen.getByText('12.40 V')).toBeTruthy();
     expect(screen.getByText('1,250 mL')).toBeTruthy();
-    expect(screen.getByText('Component self-check: Unknown')).toBeTruthy();
-    expect(allText()).not.toMatch(/of 20|35%|\bcells? \d|Working: /);
+    expect(screen.getByText('Self-check: not reported yet (placeholder)')).toBeTruthy();
   });
 
   it('keeps the last report only as "Last received" when the gateway becomes unavailable, and never overlaps polls', async () => {

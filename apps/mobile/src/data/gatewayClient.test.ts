@@ -122,19 +122,26 @@ describe('gateway client', () => {
     });
   });
 
-  it('is observe-only: every call except pairing is a bodiless GET, and no route can command the robot', async () => {
+  it('is observe-only: only pairing, the field intent and the export READ are POSTs, and no route can command the robot', async () => {
     const { fetch, calls } = fakeFetch({ status: 200, body: {} });
     const client = createGatewayClient({ baseUrl: '', fetch });
-    expect(Object.keys(client).sort()).toEqual(['pair', 'robotStatus', 'runReadings', 'runRecommendation', 'runs', 'session']);
+    expect(Object.keys(client).sort()).toEqual(['exportCsv', 'exportRuns', 'field', 'pair', 'robotStatus', 'runReadings', 'runRecommendation', 'runs', 'selectField', 'session']);
     await client.pair('ABCD-1234');
     await client.session('t');
     await client.robotStatus('t');
     await client.runs('t');
     await client.runReadings('t', 'r');
     await client.runRecommendation('t', 'r');
-    const [pairCall, ...reads] = calls;
+    await client.field('t');
+    await client.exportRuns('t');
+    await client.selectField('t', 'f1');
+    await client.exportCsv('t', { kind: 'readings', runId: 'r' });
+    const [pairCall, ...rest] = calls;
     expect(pairCall).toMatchObject({ method: 'POST', url: API_V1_ROUTES.pairing });
+    const reads = rest.slice(0, 7);
     expect(reads.every((c) => c.method === 'GET' && c.body === undefined)).toBe(true);
+    // D54: recording the field choice (intent only) and building an export (read-only) are the only other POSTs.
+    expect(rest.slice(7).map((c) => [c.method, c.url])).toEqual([['POST', API_V1_ROUTES.fieldSelections], ['POST', API_V1_ROUTES.exportCsv]]);
     expect(calls.map((c) => c.url).join(' ')).not.toMatch(/command|control|dose|dosing|motor|pump|actuator|navigate|start|stop/i);
   });
 

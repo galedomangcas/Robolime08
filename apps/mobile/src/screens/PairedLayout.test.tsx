@@ -70,6 +70,10 @@ function fakeClient() {
       calls.push('recommendation');
       return notFound;
     },
+    field: async () => ({ ok: false, failure: { kind: 'api', status: 404, code: 'NO_ACTIVE_FIELD', retryAfterSeconds: null } }),
+    selectField: async (_t: string, fieldId: string) => ({ ok: true, data: { selection: { fieldId, confirmedAt: '2026-03-01T12:00:00.000Z' } } }),
+    exportRuns: async () => ({ ok: true, data: { runs: [] } }),
+    exportCsv: async () => ({ ok: false, failure: { kind: 'invalid-response' } }),
   };
   return { client, calls };
 }
@@ -93,63 +97,106 @@ function setWindow(width: number, height: number) {
 
 afterEach(() => setWindow(750, 1334));
 
-describe('paired layout (D50)', () => {
-  it('opens on the Field section with the strip, honest notes and no map, progress or field selection', async () => {
+describe('paired layout (D50, D54)', () => {
+  it('opens on the Field section with progress, the needed-lime summary and a placeholder map', async () => {
     await renderPaired();
     expect(screen.getByRole('tab', { name: 'Field' }).props.accessibilityState).toMatchObject({ selected: true });
     expect(screen.getByText('Synthetic demo robot')).toBeTruthy();
-    expect(screen.getByText('SYNTHETIC')).toBeTruthy();
     expect(screen.getByText('Field gateway connected')).toBeTruthy();
+    expect(screen.getByText('Working: 7 of 20 cells (35%)')).toBeTruthy();
+    expect(screen.getByLabelText('7 of 20 cells')).toBeTruthy();
     expect(screen.getByText('575 mL')).toBeTruthy();
-    expect(screen.getByText('Battery voltage · health TBC')).toBeTruthy();
-    expect(screen.getByText(/The field map, cell progress and field selection are not part of this version/)).toBeTruthy();
-    // The mockup's "Working: 7 of 20 cells (35%)", "6 of 7 needed lime" and "8/8 OK" never appear.
-    expect(allText()).not.toMatch(/\b7 of 20\b|35 ?%|needed lime|8\/8|Choose your field|LAPTOP-LAN-IP/);
+    expect(screen.getByText('Battery · health TBC')).toBeTruthy();
+    // Self-check stays a labelled placeholder: never "8/8 OK" (#9).
+    expect(screen.getByText('Self-check: not reported yet (placeholder)')).toBeTruthy();
+    expect(allText()).not.toMatch(/8\/8/);
+    expect(await screen.findByText('1 of 1 measured cell needed lime')).toBeTruthy();
+    expect(screen.getByText('19 cells left · cells fill in as the robot reports')).toBeTruthy();
+    expect(screen.getByText('Field not provisioned')).toBeTruthy();
+    // Cell index 3 is C4, too acidic, with a text label; C8 (index 7) is the assumed next cell.
+    expect(screen.getByRole('button', { name: 'C4, pH 5.20, Too acidic, limed. Open readings' })).toBeTruthy();
+    expect(screen.getByLabelText('C8, next cell (assumed order)')).toBeTruthy();
+    expect(screen.getByText(/near-target cut-off 5\.50 is a placeholder/)).toBeTruthy();
+    expect(screen.getByText(/Placeholder layout: no surveyed field grid/)).toBeTruthy();
   });
 
-  it('shows research exports as unavailable downloads with the laptop command, and no values', async () => {
-    const fake = await renderPaired();
-    await act(async () => fireEvent.press(screen.getByRole('tab', { name: 'Exports' })));
-    expect(screen.getByText('Research exports')).toBeTruthy();
-    expect(screen.getByText('Downloads are not available in the app yet')).toBeTruthy();
-    expect(screen.getByText(/npm run export:csv/)).toBeTruthy();
-    for (const name of ['Readings per run', 'Dosing + verification pairs', 'Radio delivery']) {
-      expect(screen.getByLabelText(`Download ${name}`).props.accessibilityState).toEqual({ disabled: true });
-    }
-    // No invented counts or delivery percentages; exports trigger no gateway request.
-    expect(allText()).not.toMatch(/\d+ ?%|of 20|\d+ of \d+ records/);
-    expect(fake.calls.every((c) => c === 'status')).toBe(true);
+  it('opens a map cell in the detail sheet with its band label and the placeholder note', async () => {
+    await renderPaired();
+    await act(async () => fireEvent.press(await screen.findByRole('button', { name: 'C4, pH 5.20, Too acidic, limed. Open readings' })));
+    expect(screen.getByText('Cell 4 · record 1')).toBeTruthy();
+    expect(screen.getByText('Soil pH')).toBeTruthy();
+    expect(screen.getAllByText('Too acidic').length).toBeGreaterThan(0);
+    expect(screen.getByText('Soil temp.')).toBeTruthy();
+    expect(screen.getByText(/Synthetic demo values\. Commanded volume is not a measurement of liquid delivered\./)).toBeTruthy();
+    await act(async () => fireEvent.press(screen.getByRole('button', { name: 'Close reading' })));
+    expect(screen.queryByText('Cell 4 · record 1')).toBeNull();
   });
 
-  it('opens a reading in a detail sheet, compared only with the confirmed 6.00 target', async () => {
+  it('shows run tiles and a measured / expected-after-lime map in Results', async () => {
     await renderPaired();
     await act(async () => fireEvent.press(screen.getByRole('tab', { name: 'Results' })));
     await act(async () => fireEvent.press(await screen.findByRole('button', { name: 'Dosing run R-0001 (synthetic demo data)' })));
-    await act(async () => fireEvent.press(await screen.findByRole('button', { name: 'Cell 3 · record 1' })));
-    expect(screen.getByText('Soil pH')).toBeTruthy();
-    expect(screen.getByText('Below target 6.00')).toBeTruthy();
-    // The gauge is decorative (hidden from screen readers; the pill above states the comparison).
-    expect(screen.getByText('Target 6.00', { includeHiddenElements: true })).toBeTruthy();
-    expect(screen.queryByText('Target 6.00')).toBeNull();
-    expect(screen.getByText('Soil temp.')).toBeTruthy();
-    expect(screen.getByText(/Synthetic demo values\. Commanded volume is not a measurement of liquid delivered\./)).toBeTruthy();
-    // The unconfirmed three-band labels from the mockup are not used (OPEN_ITEMS #4).
-    expect(allText()).not.toMatch(/Too acidic|Near target/);
-    await act(async () => fireEvent.press(screen.getByRole('button', { name: 'Close reading' })));
-    expect(screen.queryByText('Below target 6.00')).toBeNull();
+    expect(await screen.findByText('Cells limed')).toBeTruthy();
+    expect(screen.getByText('Median expected pH')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'C4, pH 5.20, Too acidic, limed. Open readings' })).toBeTruthy();
+    await act(async () => fireEvent.press(screen.getByRole('tab', { name: 'Expected after lime' })));
+    // Limed cell C4: expected post-correction pH 6.00 → at target.
+    expect(screen.getByRole('button', { name: 'C4, pH 6.00, At target, limed. Open readings' })).toBeTruthy();
   });
 
-  it('uses the side rail and a readings table at laptop width', async () => {
+  it('builds research exports on the gateway and reports what it built', async () => {
+    const fake = fakeClient();
+    fake.client.exportRuns = async () => ok({ runs: [{ id: 'run-1', sourceRunId: 'R-0001', runType: 'dosing', readingCount: 1, firstRobotRecordedAt: '2026-03-01T08:00:00.000Z', isSynthetic: true }] });
+    fake.client.exportCsv = async (_t, req) => ok({ kind: req.kind, filename: `readings_R-0001.csv`, csv: 'a,b\n1,2\n', rows: 1, pairCounts: null, delivery: null });
+    const store = createMemorySessionStore();
+    store.save(SESSION);
+    await render(<AppRoot client={fake.client} store={store} now={() => NOW} timers={noTimers} />);
+    await act(async () => fireEvent.press(await screen.findByRole('tab', { name: 'Exports' })));
+    expect(await screen.findByText(/R-0001/)).toBeTruthy();
+    const download = screen.getByLabelText('Download Readings per run');
+    expect(download.props.accessibilityState).toMatchObject({ disabled: false });
+    // Paired needs a verification run; none is stored.
+    expect(screen.getByLabelText('Download Dosing + verification pairs').props.accessibilityState).toMatchObject({ disabled: true });
+    await act(async () => fireEvent.press(download));
+    // No browser in tests, so the screen says it could not save rather than pretending it did.
+    expect(await screen.findByText('Built readings_R-0001.csv; this device cannot save files · 1 row')).toBeTruthy();
+  });
+
+  it('uses the side rail, a cell readings table and the map at laptop width', async () => {
     setWindow(1280, 900);
     await renderPaired();
     expect(screen.getAllByRole('tab').map((t) => t.props.accessibilityLabel)).toEqual(['Field', 'Results', 'Exports']);
+    expect(await screen.findByText('Cell readings')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'C4 details' })).toBeTruthy();
+    expect(screen.getByText('1 of 1 needed lime')).toBeTruthy();
     await act(async () => fireEvent.press(screen.getByRole('tab', { name: 'Results' })));
     await act(async () => fireEvent.press(await screen.findByRole('button', { name: 'Dosing run R-0001 (synthetic demo data)' })));
-    expect(await screen.findByRole('button', { name: 'Cell 3 · record 1, pH 5.20' })).toBeTruthy();
-    expect(screen.getByText('Reading')).toBeTruthy(); // table header
+    expect(await screen.findByRole('button', { name: 'Cell 4 · record 1, pH 5.20' })).toBeTruthy();
+    setWindow(750, 1334);
+  });
+
+  it('asks for the field once after pairing (record of intent) when the device can keep the choice', async () => {
+    const fake = fakeClient();
+    const selected: string[] = [];
+    fake.client.field = async () => ok({ field: { id: 'f1', name: 'Calatagan demo field', locationLabel: 'Calatagan, Batangas', areaSquareMeters: 80, cellSizeMeters: 2, totalCells: 20, isSynthetic: true }, cells: [] });
+    fake.client.selectField = async (_t, fieldId) => {
+      selected.push(fieldId);
+      return ok({ selection: { fieldId, confirmedAt: '2026-03-01T12:00:00.000Z' } });
+    };
+    const kv = new Map<string, string>();
+    const storage = { getItem: (k: string) => kv.get(k) ?? null, setItem: (k: string, v: string) => void kv.set(k, v), removeItem: (k: string) => void kv.delete(k) };
+    const store = createMemorySessionStore();
+    store.save(SESSION);
+    await render(<AppRoot client={fake.client} store={store} now={() => NOW} timers={noTimers} selectionStorage={storage} />);
+    expect(await screen.findByText('Choose your field')).toBeTruthy();
+    expect(screen.getAllByText('Other fields not yet available.')).toHaveLength(2);
+    expect(screen.getByText(/does not change any robot setting/)).toBeTruthy();
+    await act(async () => fireEvent.press(screen.getByRole('button', { name: 'Confirm field' })));
+    expect(selected).toEqual(['f1']);
+    expect(await screen.findByText('Latest report')).toBeTruthy();
+    expect(kv.get('robolime.fieldSelection.v1:r1')).toBe('f1');
   });
 });
-
 describe('pH gauge colour', () => {
   it('is the target colour from 6.00 up and changes continuously below it (no hidden band edge)', () => {
     expect(gaugeColorAt(PH_TARGET)).toBe(colors.gaugeHigh);

@@ -66,7 +66,7 @@ describe('results view', () => {
     const rows = buildReadingRows([reading(2, 1, 0, null), reading(0, 2, 50, 6.1), reading(0, 1, 120.25, 5.95)]);
     expect(rows.map((r) => r.key)).toEqual(['0:1', '0:2', '2:1']);
     expect(rows[0]).toMatchObject({
-      title: 'Cell 0 · record 1',
+      title: 'Cell 1 · record 1',
       ph: '5.20',
       expectedPostCorrectionPh: '5.95',
       doseCommanded: '120.3 mL',

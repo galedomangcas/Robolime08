@@ -31,11 +31,18 @@ const STATUS: RobotStatus = {
 };
 const VALID = JSON.stringify({ status: STATUS, staleThresholdSeconds: 240 });
 
-/** Scripted fetch: each call takes the next reply; a reply may be held open until released. */
+/**
+ * Scripted fetch for the STATUS route: each status call takes the next reply; a
+ * reply may be held open until released. The Field section's own one-off
+ * requests (field, runs; D54) are answered "not found" and not counted here.
+ */
 function scriptedFetch() {
   const replies: (string | Promise<string>)[] = [];
   const urls: string[] = [];
   const fetch: FetchLike = async (url) => {
+    if (!url.endsWith('/robot/status')) {
+      return { ok: false, status: 404, headers: { get: () => null }, text: async () => '{"error":{"code":"NO_ACTIVE_FIELD","message":"none"}}' };
+    }
     urls.push(url);
     const reply = await (replies.shift() ?? VALID);
     return { ok: true, status: 200, headers: { get: () => null }, text: async () => reply };

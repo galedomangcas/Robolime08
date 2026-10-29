@@ -5,6 +5,7 @@ import {
   decodeErrorFlags,
   type CellReading,
   type CropScore,
+  type FieldResponse,
   type RobotState,
   type RobotStatus,
   type RobotStatusResponse,
@@ -18,6 +19,7 @@ import type { CloudConfig } from '../config/cloudConfig';
 import { REQUEST_TIMEOUT_MS } from '../config/timing';
 import type { FetchLike } from './gatewayClient';
 import {
+  isFieldResponse,
   isIsoDateTime,
   isReadingsForRun,
   isRecommendationForRun,
@@ -79,6 +81,8 @@ export interface CloudReader {
   runReadings(robotId: string, runId: string): Promise<CloudResult<RunReadingsResponse | null>>;
   /** The stored recommendation of one dosing run; `null` if none is stored. */
   runRecommendation(robotId: string, runId: string): Promise<CloudResult<RunRecommendationResponse | null>>;
+  /** The robot's active field and its cells; `null` if none is synchronised (D54). */
+  field(robotId: string): Promise<CloudResult<FieldResponse | null>>;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -412,6 +416,33 @@ export function createCloudReader(options: {
         isSynthetic: ruleSet.is_synthetic,
       };
       return isRunRecommendationResponse(response) && isRecommendationForRun(response, runId) ? { ok: true, data: response } : INVALID;
+    },
+
+    async field(robotId) {
+      if (!UUID.test(robotId)) return INVALID;
+      const fields = await get(`fields?select=id,name,location_label,area_m2,cell_size_m,total_cells,is_synthetic&robot_id=eq.${robotId}&is_active=is.true&limit=1`);
+      if (!fields.ok) return fields;
+      const f = fields.data[0];
+      if (f === undefined) return { ok: true, data: null };
+      if (!isObject(f) || typeof f.id !== 'string' || !UUID.test(f.id)) return INVALID;
+      const cells = await getAll(`field_cells?select=cell_index,grid_row,grid_column,center_latitude,center_longitude&field_id=eq.${f.id}&order=cell_index.asc`);
+      if (!cells.ok) return cells;
+      const response: unknown = {
+        field: {
+          id: f.id, name: f.name, locationLabel: f.location_label, areaSquareMeters: f.area_m2 ?? null,
+          cellSizeMeters: f.cell_size_m, totalCells: f.total_cells ?? null, isSynthetic: f.is_synthetic,
+        },
+        cells: cells.data.map((c) => {
+          const row = isObject(c) ? c : {};
+          const lat = row.center_latitude;
+          const lon = row.center_longitude;
+          return {
+            cellIndex: row.cell_index, gridRow: row.grid_row ?? null, gridColumn: row.grid_column ?? null,
+            center: isFiniteNumber(lat) && isFiniteNumber(lon) ? { latitude: lat, longitude: lon } : null,
+          };
+        }),
+      };
+      return isFieldResponse(response) ? { ok: true, data: response } : INVALID;
     },
   };
 }

@@ -32,7 +32,7 @@ describe('buildStatusView', () => {
       heading: 'Latest report',
       freshnessLabel: 'Reported 30 s ago',
       isStale: false,
-      stateLabel: 'Working',
+      stateLabel: 'Working: 7 of 20 cells (35%)',
       batteryVoltage: '12.40 V',
       limeCommanded: '1,250 mL',
       connectionOk: true,
@@ -76,12 +76,16 @@ describe('buildStatusView', () => {
     expect(buildStatusView({ connection: { kind: 'connecting' }, snapshot: null, now: NOW }).emptyMessage).toBe('Waiting for the gateway…');
   });
 
-  it('never exposes cell counts or progress percentages, for any state', () => {
-    for (const state of ['INITIALIZING', 'IDLE', 'WORKING', 'PAUSED', 'COMPLETED', 'ERROR', 'MANUAL'] as const) {
+  it('shows cell progress only while working (D54), and never an impossible count', () => {
+    for (const state of ['INITIALIZING', 'IDLE', 'PAUSED', 'COMPLETED', 'ERROR', 'MANUAL'] as const) {
       const view = buildStatusView({ connection: { kind: 'connected' }, snapshot: snap(status({ state, cellsCompleted: 7, totalCells: 20 })), now: NOW });
-      expect(view.stateLabel).not.toMatch(/cell|of 20|%|\b7\b/i);
-      expect(JSON.stringify(view)).not.toMatch(/of 20|35%|cells/i);
+      expect(view.stateLabel).not.toMatch(/of 20|%/);
+      expect(view.progress).toBeNull();
     }
+    const working = buildStatusView({ connection: { kind: 'connected' }, snapshot: snap(status({ state: 'WORKING', cellsCompleted: 7, totalCells: 20 })), now: NOW });
+    expect(working.progress).toEqual({ completed: 7, total: 20, percent: 35 });
+    const broken = buildStatusView({ connection: { kind: 'connected' }, snapshot: snap(status({ state: 'WORKING', cellsCompleted: 25, totalCells: 20 })), now: NOW });
+    expect(broken.progress).toBeNull();
   });
 
   it('lists reported faults by name and flags an invalid robot timestamp as stale', () => {

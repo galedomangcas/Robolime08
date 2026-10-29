@@ -12,6 +12,7 @@ import { BottomTabs, SideNav, type Section } from '../ui/Navigation';
 import { Card, InfoBox, SecondaryButton, StatusPill, SyntheticBadge, textStyles } from '../ui/primitives';
 import { StatusStrip } from '../ui/StatusStrip';
 import { ExportsScreen } from './ExportsScreen';
+import { FieldOverview } from './FieldOverview';
 import { ResultsScreen } from './ResultsScreen';
 
 interface StatusScreenProps {
@@ -98,9 +99,16 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
       <StatusStrip view={view} wide={wide} />
 
       {section === 'results' && <ResultsScreen dataSource={dataSource} token={session.token} onSessionInvalid={onSessionInvalid} />}
-      {section === 'exports' && <ExportsScreen online={online} />}
+      {section === 'exports' && <ExportsScreen dataSource={dataSource} token={session.token} onSessionInvalid={onSessionInvalid} />}
       {section === 'field' && (
         <View style={styles.sectionBody}>
+          <FieldOverview
+            dataSource={dataSource}
+            token={session.token}
+            status={snapshot?.status ?? null}
+            wide={wide}
+            onSessionInvalid={onSessionInvalid}
+          />
           <InfoBox tone="neutral" icon="alert">
             <Text style={textStyles.body}>
               The robot sends status only after each cell, with no heartbeat, so a change or fault during a cell
@@ -116,18 +124,8 @@ export function StatusScreen({ dataSource, session, onSessionInvalid, onForget, 
               Commanded volume reported by the robot, not a measurement of liquid actually delivered.
             </Text>
             <Text style={textStyles.muted}>
-              Self-check results are not reported yet (pending the packet specification). Unknown does not mean
-              passed. Battery health is not defined yet; only the voltage is reported.
-            </Text>
-          </Card>
-
-          <Card>
-            <Text accessibilityRole="header" style={textStyles.sectionTitle}>
-              Field map
-            </Text>
-            <Text style={textStyles.muted}>
-              The field map, cell progress and field selection are not part of this version. Readings for each run
-              are under Results.
+              Self-check results are not reported yet (pending the packet specification): the dots are a placeholder
+              and do not mean passed. Battery health is not defined yet; only the voltage is reported.
             </Text>
           </Card>
 
